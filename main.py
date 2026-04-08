@@ -6,7 +6,7 @@ import sys
 
 from dotenv import load_dotenv
 
-from src.omg_cli.abstract.null import NullAdapter
+from src.omg_cli.abstract.none import NoneAdapter
 from src.omg_cli.config import get_adapter_manager
 from src.omg_cli.context import ChatContext
 from src.omg_cli.log import logger
@@ -50,10 +50,10 @@ def main():
     else:
         adapter = adapter_manager.default_adapter
 
-    # If no model configured, use NullAdapter (TUI will prompt for import)
+    # If no model configured, use NoneAdapter (TUI will prompt for import)
     if adapter is None:
         logger.info("未配置任何模型，请先使用 /import 命令导入模型")
-        adapter = NullAdapter()
+        adapter = NoneAdapter()
 
     # Create chat context
     context = ChatContext(

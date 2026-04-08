@@ -1,4 +1,4 @@
-"""Null adapter for when no model is configured."""
+"""None adapter for when no model is configured."""
 
 from collections.abc import AsyncIterator
 from functools import cache
@@ -15,7 +15,7 @@ from src.omg_cli.types.message import (
 from src.omg_cli.types.tool import Tool
 
 
-class NullAdapter(ChatAdapter):
+class NoneAdapter(ChatAdapter):
     """Adapter placeholder when no model is configured.
 
     Raises RuntimeError with helpful message when any method is called.
@@ -27,7 +27,7 @@ class NullAdapter(ChatAdapter):
 
     @property
     def type(self) -> str:
-        return "null"
+        return "none"
 
     @property
     def model_name(self) -> str:
