@@ -316,18 +316,29 @@ Screen {
     text-style: bold;
 }
 
-#custom-footer {
-    width: 1fr;
-    height: 1;
+/* Custom footer with context status */
+ContextFooter {
+    layout: horizontal;
+    color: $footer-foreground;
+    background: $footer-background;
     dock: bottom;
+    height: 1;
+    scrollbar-size: 0 0;
 }
 
-.context-status {
+ContextFooter .footer-content {
+    width: 1fr;
+    height: 1;
+    align: left middle;
+}
+
+ContextFooter .context-status {
     width: auto;
     height: 1;
-    content-align: center middle;
+    align: right middle;
     color: $text-muted;
     text-style: dim;
+    padding: 0 1;
 }
 
 .import-wizard {

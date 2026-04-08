@@ -7,11 +7,13 @@ if TYPE_CHECKING:
 
 from rich.text import Text
 from textual import events, on
+from textual.app import ComposeResult
 from textual.binding import BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message as TextualMessage
 from textual.visual import VisualType
-from textual.widgets import ListItem, ListView, Markdown, Static, TextArea
+from textual.widget import Widget
+from textual.widgets import Footer, ListItem, ListView, Markdown, Static, TextArea
 
 from src.omg_cli.types.message import (
     Message,
@@ -130,6 +132,45 @@ class ContextStatusWidget(Static):
         max_k = max_context_size / 1000
 
         self.update(f"context: {usage_pct:.1f}%({context_k:.1f}k/{max_k:.1f}k)")
+
+
+class ContextFooter(Footer):
+    """Custom footer with context usage display on the right."""
+
+    # CSS styles are defined in styles.py
+
+    def __init__(
+        self,
+        *children: Widget,
+        name: str | None = None,
+        id: str | None = None,
+        classes: str | None = None,
+        disabled: bool = False,
+        show_command_palette: bool = True,
+        compact: bool = False,
+    ) -> None:
+        super().__init__(
+            *children,
+            name=name,
+            id=id,
+            classes=classes,
+            disabled=disabled,
+            show_command_palette=show_command_palette,
+            compact=compact,
+        )
+        self._context_widget: ContextStatusWidget | None = None
+
+    def compose(self) -> ComposeResult:
+        """Compose the footer with context status."""
+        with Horizontal(classes="footer-content"):
+            yield from super().compose()
+        self._context_widget = ContextStatusWidget()
+        yield self._context_widget
+
+    def update_context_display(self, context_tokens: int, max_context_size: int) -> None:
+        """Update the context usage display."""
+        if self._context_widget is not None:
+            self._context_widget.update_display(context_tokens, max_context_size)
 
 
 class CommandPalette(ListView, FileCompletionMixin):

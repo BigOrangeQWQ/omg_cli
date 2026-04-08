@@ -4,7 +4,7 @@ from typing import ClassVar
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Footer, RichLog
+from textual.widgets import RichLog
 
 from src.omg_cli.config import get_config_manager
 from src.omg_cli.context import (
@@ -37,7 +37,7 @@ from .widgets import (
     ApprovalDialog,
     CommandPalette,
     ComposerTextArea,
-    ContextStatusWidget,
+    ContextFooter,
     MessageHistoryView,
     MessageRow,
     PreviewRow,
@@ -69,6 +69,7 @@ class ChatTerminalApp(App):
         self._pending_tool_name: str | None = None
         self._is_processing: bool = False
         self._ctrl_c_count: int = 0
+        self._composer_stashed_text: str = ""  # Cache for composer text during approval
         # Set app reference on context for command access
         self.context.set_tool_confirmation_handler(self._confirm_tool_call)
         self._register_default_commands()
@@ -87,10 +88,8 @@ class ChatTerminalApp(App):
                 yield Vertical(id="approval-container")
                 yield ComposerTextArea(placeholder="输入消息，Enter 发送，Ctrl+Enter 换行，/ 查看命令……")
             yield RichLog(id="debug-panel", wrap=True, markup=False, highlight=False)
-        # Custom footer with context status on the left
-        with Horizontal(id="custom-footer"):
-            yield ContextStatusWidget()
-            yield Footer()
+        # Custom footer with context status on the right
+        yield ContextFooter()
 
     async def on_mount(self) -> None:
         if self.debug_mode:
@@ -203,8 +202,8 @@ class ChatTerminalApp(App):
                     self.context.token_usage.max_context_size = max_context
 
             # Update the display
-            context_widget = self.query_one(ContextStatusWidget)
-            context_widget.update_display(
+            footer = self.query_one(ContextFooter)
+            footer.update_context_display(
                 self.context.token_usage.context_tokens,
                 self.context.token_usage.max_context_size,
             )
@@ -238,8 +237,13 @@ class ChatTerminalApp(App):
                 self._sync_composer_height()
                 return
 
-        # Prevent submission while processing
+        # If LLM is thinking, queue the message and show feedback
         if self._is_processing:
+            self.context.pending_messages.append(text)
+            composer.load_text("")
+            self._sync_composer_height()
+            queue_count = len(self.context.pending_messages)
+            await self._mount_status(f"消息已加入队列 (当前队列: {queue_count} 条)", variant="info")
             return
 
         logger.debug(f"终端提交用户输入: {text[:80]!r}")
@@ -272,10 +276,18 @@ class ChatTerminalApp(App):
         return True
 
     async def _submit_text(self, text: str) -> None:
+        """Submit user text to the context."""
         self._is_processing = True
         composer = self.query_one(ComposerTextArea)
         try:
-            await self.context.say(text)
+            await self.context.send(text)
+
+            # After processing, check if there are pending messages
+            if self.context.pending_messages:
+                pending = list(self.context.pending_messages)
+                self.context.pending_messages.clear()
+                await self._mount_status(f"发送队列中的 {len(pending)} 条消息...", variant="info")
+                await self.context.send(pending)
         except Exception as exc:
             logger.debug(f"终端会话异常: {exc}")
             self._debug(f"debug: exception: {exc}")
@@ -461,6 +473,7 @@ class ChatTerminalApp(App):
         """Interrupt the current LLM output stream."""
         if self._is_processing:
             self.context.interrupt()
+            logger.error("用户打断消息")
             self._debug("debug: interrupt requested")
             self._ctrl_c_count = 0
         else:
@@ -536,8 +549,10 @@ class ChatTerminalApp(App):
         await container.mount(dialog)
         dialog.focus()
 
-        # Set placeholder - direct input means reject with clarification
+        # Cache current composer text and set placeholder
         composer = self.query_one("#composer", ComposerTextArea)
+        self._composer_stashed_text = composer.text
+        composer.load_text("")
         composer.placeholder = "直接输入拒绝原因，Enter 发送……"
 
         return await self._pending_tool_confirmation
@@ -598,6 +613,11 @@ class ChatTerminalApp(App):
         try:
             composer = self.query_one("#composer", ComposerTextArea)
             composer.placeholder = "输入消息，Enter 发送，Ctrl+Enter 换行……"
+            # Restore stashed text if any
+            if self._composer_stashed_text:
+                composer.load_text(self._composer_stashed_text)
+                self._composer_stashed_text = ""
+                self._sync_composer_height()
         except Exception:
             pass
 
