@@ -11,6 +11,7 @@ from textual.app import ComposeResult
 from textual.binding import BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message as TextualMessage
+from textual.selection import Selection
 from textual.visual import VisualType
 from textual.widget import Widget
 from textual.widgets import Footer, ListItem, ListView, Markdown, Static, TextArea
@@ -70,6 +71,11 @@ class SafeStatic(Static):
         self._Static__content = content
         self.refresh(layout=layout)
 
+    @property
+    def text_selection(self) -> Selection | None:
+        # Guard against Textual render path crashing when widget is detached
+        return None
+
 
 class CollapsibleWidget(SafeStatic):
     """Base class for collapsible content widgets (thinking, tool results, etc.)."""
@@ -117,9 +123,9 @@ class StatusWidget(SafeStatic):
 class ContextStatusWidget(Static):
     """Widget to display context usage in the footer."""
 
-    def __init__(self) -> None:
+    def __init__(self, context_tokens: int = 0, max_context_size: int = 100000) -> None:
         super().__init__("", classes="context-status")
-        self.update_display(0, 100000)
+        self.update_display(context_tokens, max_context_size)
 
     def update_display(self, context_tokens: int, max_context_size: int) -> None:
         """Update the context usage display."""
@@ -159,18 +165,25 @@ class ContextFooter(Footer):
             compact=compact,
         )
         self._context_widget: ContextStatusWidget | None = None
+        self._last_context_tokens: int = 0
+        self._last_max_context_size: int = 100000
 
     def compose(self) -> ComposeResult:
         """Compose the footer with context status."""
         with Horizontal(classes="footer-content"):
             yield from super().compose()
-        self._context_widget = ContextStatusWidget()
+        self._context_widget = ContextStatusWidget(
+            self._last_context_tokens,
+            self._last_max_context_size,
+        )
         yield self._context_widget
 
     def update_context_display(self, context_tokens: int, max_context_size: int) -> None:
         """Update the context usage display."""
+        self._last_context_tokens = context_tokens
+        self._last_max_context_size = max_context_size
         # Lazy lookup if reference lost (e.g., after recompose)
-        if self._context_widget is None:
+        if self._context_widget is None or not self._context_widget.is_mounted:
             try:
                 self._context_widget = self.query_one(ContextStatusWidget)
             except Exception:
@@ -785,7 +798,7 @@ class ToolPreviewRow(Horizontal):
 
     async def append(self, text: str) -> None:
         """Update preview with last N chars of latest content."""
-        if not text:
+        if not text or not self.is_mounted:
             return
         widget = self.query_one(SafeStatic)
 
@@ -800,8 +813,8 @@ class ToolPreviewRow(Horizontal):
         pass
 
 
-class UnifiedStreamPreviewRow(Horizontal):
-    """Stream preview that combines thinking and text."""
+class UnifiedStreamPreviewRow(Vertical):
+    """Stream preview that combines thinking and text with Markdown rendering."""
 
     def __init__(self, message_index: int) -> None:
         super().__init__(classes="stream-row")
@@ -809,33 +822,44 @@ class UnifiedStreamPreviewRow(Horizontal):
         self.thinking_content = ""
         self.text_content = ""
         self.has_text_started = False
-        self._container: SafeStatic | None = None
+        self._thinking_widget: SafeStatic | None = None
+        self._markdown_widget: Markdown | None = None
+        self._last_markdown_len: int = 0
 
     def compose(self):
         yield SafeStatic(
-            "", classes="stream-preview stream-preview--unified", id=f"unified-preview-{self.message_index}"
+            "", classes="stream-preview stream-preview--think", id=f"unified-thinking-{self.message_index}"
+        )
+        yield Markdown(
+            "",
+            classes="stream-preview stream-preview--markdown",
+            id=f"unified-markdown-{self.message_index}",
+            open_links=False,
         )
 
     def on_mount(self) -> None:
-        self._container = self.query_one(SafeStatic)
-        self._refresh()
+        self._thinking_widget = self.query_one(f"#unified-thinking-{self.message_index}", SafeStatic)
+        self._markdown_widget = self.query_one(f"#unified-markdown-{self.message_index}", Markdown)
+        self.call_after_refresh(self._refresh)
 
     async def append_thinking(self, text: str) -> None:
         self.thinking_content += text
-        self._refresh()
+        await self._refresh()
 
     async def append_text(self, text: str) -> None:
         if not self.has_text_started and text:
             self.has_text_started = True
         self.text_content += text
-        self._refresh()
+        await self._refresh()
 
-    def _refresh(self) -> None:
-        if self._container is None:
+    async def _refresh(self) -> None:
+        if self._thinking_widget is None or self._markdown_widget is None:
+            return
+        if not self._thinking_widget.is_mounted or not self._markdown_widget.is_mounted:
             return
 
-        lines = []
-
+        # Update thinking preview
+        lines: list[str] = []
         if self.thinking_content:
             preview = _build_thinking_preview(self.thinking_content, limit=18)
             lines.append(f"> 思考 · {preview}")
@@ -843,12 +867,18 @@ class UnifiedStreamPreviewRow(Horizontal):
                 lines.append("────────────────────")
                 lines.append(self.thinking_content.strip())
 
-        if self.has_text_started and self.text_content:
-            if self.thinking_content:
-                lines.append("")
-            lines.append(self.text_content)
+        self._thinking_widget.update("\n".join(lines))
+        self._thinking_widget.styles.display = "block" if lines else "none"
 
-        self._container.update("\n".join(lines))
+        # Update markdown preview (streamed)
+        if self.has_text_started and self.text_content:
+            self._markdown_widget.styles.display = "block"
+            delta = self.text_content[self._last_markdown_len :]
+            if delta:
+                await self._markdown_widget.append(delta)
+                self._last_markdown_len = len(self.text_content)
+        else:
+            self._markdown_widget.styles.display = "none"
 
     async def close(self) -> None:
         pass
