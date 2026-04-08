@@ -445,7 +445,7 @@ class AnthropicAPI(ChatAdapter):
                 # 5. Message Delta
                 elif isinstance(event, RawMessageDeltaEvent):
                     if event.usage:
-                        yield MessageStreamDeltaEvent(
+                        yield MessageStreamCompleteEvent(
                             segment=to_usage_segment(usage=event.usage),
                             index=_next_event_index(),
                         )
@@ -641,8 +641,11 @@ if __name__ == "__main__":
                     case ToolSegment() as segment:
                         assistant_segments.append(segment)
                         tool_calls.append(segment.to_tool_call())
-                    case _:
-                        ...
+                    case UsageSegment() as segment:
+                        print(
+                            f"\n[Usage] input_tokens={segment.input_tokens}, \
+                            output_tokens={segment.output_tokens}, cached_tokens={segment.cached_tokens}"
+                        )
 
         # 如果有 tool calls，构建 assistant message 并追加到对话
         if tool_calls:
