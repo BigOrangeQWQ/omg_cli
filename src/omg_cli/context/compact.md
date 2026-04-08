@@ -1,50 +1,21 @@
-You are tasked with compacting a coding conversation context. This is critical for maintaining an effective working memory for the coding agent.
+You are currently tasked with compressing your own code context, removing **redundant** information to ensure your work remains efficient.
 
-**Compression Priorities (in order):**
-1. **Current Task State**: What is being worked on RIGHT NOW
-2. **Errors & Solutions**: All encountered errors and their resolutions
-3. **Code Evolution**: Final working versions only (remove intermediate attempts)
-4. **System Context**: Project structure, dependencies, environment setup
-5. **Design Decisions**: Architectural choices and their rationale
-6. **TODO Items**: Unfinished tasks and known issues
+# Regarding Compression of User Input
 
-**Compression Rules:**
-- MUST KEEP: Error messages, stack traces, working solutions, current task
-- MERGE: Similar discussions into single summary points
-- REMOVE: Redundant explanations, failed attempts (keep lessons learned), verbose comments
-- CONDENSE: Long code blocks → keep signatures + key logic only
+Preserve the execution guidelines, code standards, etc., that the user has explicitly mentioned — these are **rules you must follow** that transcend any specific task.
 
-**Special Handling:**
-- For code: Keep full version if < 20 lines, otherwise keep signature + key logic
-- For errors: Keep full error message + final solution
-- For discussions: Extract decisions and action items only
+# Necessary Information to Retain
 
-**Input Context to Compress:**
+1. What aspect of the work are you currently focusing on?
+2. What aspect of the project does the file you're reading primarily handle?
+3. For a long, complex reasoning problem, what is the final solution? If necessary, write it into `NOTES.md`.
 
-{CONTEXT}
+# Required Output Structure
 
-**Required Output Structure:**
 
 <current_focus>
 [What we're working on now]
 </current_focus>
-
-<environment>
-- [Key setup/config points]
-- ...more...
-</environment>
-
-<completed_tasks>
-- [Task]: [Brief outcome]
-- ...more...
-</completed_tasks>
-
-<active_issues>
-- [Issue]: [Status/Next steps]
-- ...more...
-</active_issues>
-
-<code_state>
 
 <file>
 [filename]
@@ -59,14 +30,6 @@ You are tasked with compacting a coding conversation context. This is critical f
 **Latest version:**
 [Critical code snippets in this file]
 </file>
-
-<file>
-[filename]
-...Similar as above...
-</file>、、
-
-...more files...
-</code_state>
 
 <important_context>
 - [Any crucial information not covered above]
