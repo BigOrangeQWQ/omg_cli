@@ -492,7 +492,7 @@ class ChatTerminalApp(App):
             # Not processing, user might be trying to quit
             self._ctrl_c_count += 1
             if self._ctrl_c_count >= 2:
-                self.run_worker(self.logger.info("提示：使用 Ctrl+D 退出程序"))
+                await self.logger.info("提示：使用 Ctrl+D 退出程序")
                 self._ctrl_c_count = 0
 
     async def action_quit(self) -> None:
