@@ -4,7 +4,6 @@ from collections.abc import AsyncIterator, Callable, Sequence
 import copy
 from datetime import UTC, datetime
 import json
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -55,7 +54,7 @@ RESERVED_TOKENS = 50_000
 # Number of recent message pairs to keep during compaction
 RECENT_MESSAGES_TO_KEEP = 4
 
-COMPACT_MD = (Path(__file__).parent / "compact.md").read_text("utf-8")
+from src.omg_cli.prompts import COMPACT_MD
 
 type ListenerRegistration = Callable[..., None | AsyncIterator[None]]
 
