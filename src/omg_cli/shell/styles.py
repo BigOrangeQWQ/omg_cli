@@ -93,7 +93,7 @@ Screen {
 
 .message,
 .stream-preview {
-    width: auto;
+    width: 1fr;
     max-width: 80;
     min-width: 0;
     height: auto;
@@ -118,6 +118,14 @@ Screen {
 }
 
 .message__text {
+    padding: 0;
+    text-style: none;
+}
+
+/* Ensure Markdown content wraps properly */
+Markdown.message__text {
+    width: 100%;
+    height: auto;
     padding: 0;
 }
 
