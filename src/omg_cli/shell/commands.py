@@ -20,6 +20,7 @@ class CommandRegistrar:
         self._register_import()
         self._register_models()
         self._register_switch()
+        self._register_compact()
 
     def _register_new(self) -> None:
         """Register /new command."""
@@ -146,5 +147,41 @@ class CommandRegistrar:
                 description="Switch to a different model",
                 description_zh="切换到其他模型",
                 handler=cmd_switch,
+            )
+        )
+
+    def _register_compact(self) -> None:
+        """Register /compact command to compact conversation context."""
+
+        async def cmd_compact(ctx, args: str) -> None:
+            # Parse optional keep_recent argument
+            keep_recent = 4  # Default value
+            if args.strip():
+                try:
+                    keep_recent = int(args.strip())
+                    if keep_recent < 1:
+                        await self.app._mount_status("参数错误: keep_recent 必须大于 0", variant="error")
+                        return
+                except ValueError:
+                    await self.app._mount_status("用法: /compact [保留消息数]", variant="error")
+                    return
+
+            await self.app._mount_status(f"正在压缩上下文，保留最近 {keep_recent} 条消息...")
+
+            try:
+                result = await ctx._compact_context_impl(keep_recent=keep_recent)
+                if result is None:
+                    await self.app._mount_status("消息数量不足，无需压缩")
+                else:
+                    await self.app._mount_status("上下文压缩完成")
+            except Exception as e:
+                await self.app._mount_status(f"压缩失败: {e}", variant="error")
+
+        self.context.register_command(
+            MetaCommand(
+                name="compact",
+                description="Compact conversation context by summarizing older messages",
+                description_zh="压缩上下文，总结较早的消息",
+                handler=cmd_compact,
             )
         )
