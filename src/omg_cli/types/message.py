@@ -112,7 +112,7 @@ class ToolCallDetailSegment(BaseModel):
         try:
             json.dumps(self.arguments)
             return True
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return False
 
 
@@ -168,10 +168,6 @@ class Message(BaseModel):
     tool_calls: list[ToolCall] = Field(default_factory=list)
 
     time: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
-
-    # total tokens used in this message
-    input_tokens: int = 0
-    output_tokens: int = 0
 
     # Allow additional arbitrary fields
     model_config = ConfigDict(extra="allow")
