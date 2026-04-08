@@ -31,9 +31,7 @@ class TokenUsage(BaseModel):
         self.input_tokens += usage.input_tokens
         self.output_tokens += usage.output_tokens
 
-        # Set context tokens directly from API's reported input tokens
-        # This includes all messages in the context (history + new)
-        self.set_context_tokens(usage.input_tokens)
+        self.set_context_tokens(self.total_tokens)
 
     @computed_field
     @property
