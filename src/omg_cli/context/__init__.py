@@ -102,7 +102,7 @@ class ChatContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, Todo
 
     Example:
         context = ChatContext(provider=adapter, system_prompt="You are a helpful assistant.")
-        response = await context.say("Hello!")
+        await context.send("Hello!")
 
         # Enable planning mode for todo management
         context.set_planning(True)
@@ -160,6 +160,10 @@ class ChatContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, Todo
 
         # Interrupt flag for stopping LLM output
         self._interrupt_requested = False
+
+        # Message queue for pending user inputs during LLM thinking
+        self._message_queue: list[str] = []
+        self._is_thinking: bool = False
 
         # Setup tools
         self._setup_tools(tools or [])
@@ -289,6 +293,7 @@ class ChatContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, Todo
         self.display_messages.clear()
         self._session_approve_all = False
         self.token_usage = TokenUsage()  # Reset token usage
+        self._message_queue.clear()  # Clear pending message queue
 
         # Generate new session ID for new conversation
         self.session_id = str(uuid4())
@@ -305,28 +310,10 @@ class ChatContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, Todo
         """Clear the interrupt flag."""
         self._interrupt_requested = False
 
-    async def say(
-        self,
-        text: str,
-        *,
-        max_tokens: int | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Send a user message and get assistant response.
-
-        Args:
-            text: The user message text
-            max_tokens: Maximum tokens for the response
-            **kwargs: Additional arguments for the provider
-
-        Returns:
-            The assistant's response message
-        """
-        user_message = Message(
-            role="user",
-            content=[TextSegment(text=text)],
-        )
-        return await self.send(user_message, max_tokens=max_tokens, **kwargs)
+    @property
+    def pending_messages(self) -> list[str]:
+        """Get the pending message queue (messages entered while LLM is thinking)."""
+        return self._message_queue
 
     async def thinking(
         self,
@@ -346,6 +333,9 @@ class ChatContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, Todo
 
         if not tools:
             tools = []
+
+        # Set thinking flag
+        self._is_thinking = True
 
         total_rounds = 0
         # Make a mutable copy of messages to append thinking steps and tool call results
@@ -481,17 +471,36 @@ class ChatContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, Todo
                 current_conversation_round.append(assistant_msg)
                 await self._append_message(assistant_msg)
 
+        # Clear thinking flag
+        self._is_thinking = False
+
         return response_messages, len(tool_calls) > 0
 
     async def send(
         self,
-        user_message: Message,
+        user_input: str | list[str],
         system_prompt: str | None = None,
         **kwargs: Any,
     ) -> None:
+        """Send user message(s) and get assistant response.
+
+        Args:
+            user_input: User text input(s) to send
+            system_prompt: Optional system prompt override
+            **kwargs: Additional arguments for the provider
+        """
+        # Normalize to list of strings
+        texts = [user_input] if isinstance(user_input, str) else user_input
+        if not texts:
+            return
+
         if not self.token_usage.initial_context_size:
             await self._update_max_context_size()
-        await self._append_message(user_message)
+
+        # Build and append all user messages
+        for text in texts:
+            msg = Message(role="user", content=[TextSegment(text=text)])
+            await self._append_message(msg)
 
         # Clear interrupt flag at the start of each send
         self._clear_interrupt()
