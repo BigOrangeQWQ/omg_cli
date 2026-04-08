@@ -1,0 +1,620 @@
+from asyncio.futures import Future
+from typing import ClassVar
+
+from textual.app import App, ComposeResult
+from textual.binding import BindingType
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widgets import Footer, RichLog
+
+from src.omg_cli.config import get_config_manager
+from src.omg_cli.context import (
+    BaseEvent,
+    ChatContext,
+    SessionErrorEvent,
+    SessionMessageEvent,
+    SessionResetEvent,
+    SessionStatusEvent,
+    SessionStreamCompletedEvent,
+    SessionStreamDeltaEvent,
+    ToolConfirmationDecision,
+)
+from src.omg_cli.log import logger
+from src.omg_cli.types.event import AppExitEvent, StatusLevel
+from src.omg_cli.types.message import (
+    Message,
+    MessageStreamDeltaEvent,
+    TextDetailSegment,
+    ThinkDetailSegment,
+    ToolCall,
+    ToolCallDetailSegment,
+)
+from src.omg_cli.types.tool import Tool
+
+from .import_wizard import ImportWizard
+from .styles import CSS
+from .utils import _format_arguments
+from .widgets import (
+    ApprovalDialog,
+    CommandPalette,
+    ComposerTextArea,
+    ContextStatusWidget,
+    MessageHistoryView,
+    MessageRow,
+    PreviewRow,
+    StatusWidget,
+    ToolPreviewRow,
+    UnifiedStreamPreviewRow,
+)
+
+
+class ChatTerminalApp(App):
+    """Textual TUI for ChatContext."""
+
+    CSS = CSS
+    ENABLE_COMMAND_PALETTE = False
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        ("ctrl+t", "toggle_thinking", "切换 Thinking"),
+        ("ctrl+l", "clear_session", "清空会话"),
+        ("ctrl+c", "interrupt", "打断输出"),
+        ("ctrl+d", "quit", "退出"),
+    ]
+
+    def __init__(self, context: ChatContext, *, debug_mode: bool = False) -> None:
+        super().__init__()
+        self.context = context
+        self.debug_mode = debug_mode
+        self._stream_previews: dict[tuple[str, str | int | None], PreviewRow] = {}
+        self._pending_tool_confirmation: Future[ToolConfirmationDecision] | None = None
+        self._pending_tool_name: str | None = None
+        self._is_processing: bool = False
+        self._ctrl_c_count: int = 0
+        # Set app reference on context for command access
+        self.context.set_tool_confirmation_handler(self._confirm_tool_call)
+        self._register_default_commands()
+
+    def _register_default_commands(self) -> None:
+        """Register default meta commands."""
+        from .command_definitions import register_commands
+
+        register_commands(self.context)
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(id="body"):
+            with Vertical(id="chat-panel"):
+                yield MessageHistoryView(id="messages")
+                yield CommandPalette()
+                yield Vertical(id="approval-container")
+                yield ComposerTextArea(placeholder="输入消息，Enter 发送，Ctrl+Enter 换行，/ 查看命令……")
+            yield RichLog(id="debug-panel", wrap=True, markup=False, highlight=False)
+        # Custom footer with context status on the left
+        with Horizontal(id="custom-footer"):
+            yield ContextStatusWidget()
+            yield Footer()
+
+    async def on_mount(self) -> None:
+        if self.debug_mode:
+            self.add_class("-debug")
+
+        logger.debug(
+            f"provider={self.context.provider.type}:{self.context.provider.model_name}, mode={self.debug_mode}"
+        )
+
+        messages_view = self.query_one("#messages", VerticalScroll)
+        messages_view.show_vertical_scrollbar = False
+
+        debug_panel = self.query_one("#debug-panel", RichLog)
+        debug_panel.show_vertical_scrollbar = False
+
+        # Register event handlers with context's event manager
+        self.context.register_event_handler(BaseEvent, self._handle_context_event)
+        self.context.register_event_handler(SessionStreamDeltaEvent, self._handle_stream_event)
+        self.context.register_event_handler(SessionStreamCompletedEvent, self._handle_stream_event)
+
+        for message in self.context.messages:
+            await self._mount_message(message)
+        self._debug(f"debug: connected: {self.context.provider.type}:{self.context.provider.model_name}")
+        self._sync_composer_height()
+        self._focus_composer()
+
+    async def show_current_model(self) -> None:
+        """Display current model info in message history."""
+        config_manager = get_config_manager()
+        model_config = config_manager.get_default_model()
+        if model_config:
+            await self._mount_status(f"当前模型: {model_config.name} ({model_config.model})")
+
+    async def check_and_show_import_wizard(self) -> None:
+        """Check if models exist, show import wizard if not, otherwise show current model."""
+        config_manager = get_config_manager()
+        if not config_manager.has_models():
+            await self._mount_status("未配置任何模型，请先导入模型")
+            await self.start_import_wizard()
+        else:
+            # Show current model info
+            await self.show_current_model()
+            # Initialize context display
+            await self._update_context_display()
+
+    async def start_import_wizard(self) -> None:
+        """Show the model import wizard."""
+        # Hide composer while wizard is open
+        composer = self.query_one("#composer", ComposerTextArea)
+        composer.styles.display = "none"
+
+        container = self.query_one("#approval-container", Vertical)
+        wizard = ImportWizard()
+        await container.mount(wizard)
+
+        # Force focus to wizard after mount
+        self.call_after_refresh(wizard.focus)
+
+    async def on_model_imported(self, model_name: str) -> None:
+        """Handle model import success - clear messages and show success."""
+        # Clear all messages
+        messages_view = self.query_one("#messages", VerticalScroll)
+        await messages_view.remove_children()
+        # Show success message
+        await self._mount_status(f"✓ 模型 '{model_name}' 导入成功")
+        # Reload model
+        await self.reload_model()
+
+    async def reload_model(self) -> None:
+        """Reload the current model from config."""
+        config_manager = get_config_manager()
+        model_config = config_manager.get_default_model()
+
+        if model_config is None:
+            await self._mount_status("没有可用的模型配置", variant="error")
+            return
+
+        # Use the new switch_model method on context
+        success = await self.context.switch_model(model_config.name)
+        if success:
+            await self._update_context_display()
+
+    async def on_ready(self) -> None:
+        self._sync_composer_height()
+        self.call_after_refresh(self._focus_composer)
+
+        # Check if we need to show import wizard (no models configured)
+        await self.check_and_show_import_wizard()
+
+        # Initialize MCP servers after model setup
+        await self.context.initialize_mcp_servers()
+
+    async def on_unmount(self) -> None:
+        self.context.set_tool_confirmation_handler(None)
+        self._resolve_pending_confirmation(
+            ToolConfirmationDecision(
+                approved=False,
+                reason="Terminal closed before confirmation",
+            )
+        )
+        await self.context.disconnect_all_mcp_servers()
+
+    async def _update_context_display(self) -> None:
+        """Update the context usage display in the footer."""
+        try:
+            # Get max context size from provider if not already set
+            if self.context.token_usage.max_context_size == 100000:
+                max_context = await self.context.provider.context_length()
+                if max_context and max_context > 0:
+                    self.context.token_usage.max_context_size = max_context
+
+            # Update the display
+            context_widget = self.query_one(ContextStatusWidget)
+            context_widget.update_display(
+                self.context.token_usage.context_tokens,
+                self.context.token_usage.max_context_size,
+            )
+        except Exception:
+            pass  # Silently ignore if widget not ready or provider doesn't support context_length
+
+    async def on_composer_text_area_submitted(self, event: ComposerTextArea.Submitted) -> None:
+        text = event.value.strip()
+        if not text:
+            return
+
+        # Reset Ctrl+C counter on normal input
+        self._ctrl_c_count = 0
+
+        composer = self.query_one(ComposerTextArea)
+
+        if self._pending_tool_confirmation is not None:
+            composer.load_text("")
+            self._sync_composer_height()
+            await self._handle_confirmation_input(text)
+            return
+
+        composer.add_history(text)
+
+        # Check for meta commands (starting with /)
+        if text.startswith("/"):
+            handled = await self._handle_meta_command(text)
+            if handled:
+                composer = self.query_one(ComposerTextArea)
+                composer.load_text("")
+                self._sync_composer_height()
+                return
+
+        # Prevent submission while processing
+        if self._is_processing:
+            return
+
+        logger.debug(f"终端提交用户输入: {text[:80]!r}")
+        composer = self.query_one(ComposerTextArea)
+        composer.load_text("")
+        self._sync_composer_height()
+        self.run_worker(self._submit_text(text), thread=False, exclusive=True)
+
+    async def _handle_meta_command(self, text: str) -> bool:
+        """Handle meta commands starting with /.
+
+        Returns True if command was handled.
+        """
+        # Parse command and arguments
+        parts = text.split(maxsplit=1)
+        cmd_name = parts[0].lower()
+        args = parts[1] if len(parts) > 1 else ""
+
+        # Look up command in registry
+        command = self.context.command_registry.get(cmd_name)
+        if command:
+            # Execute handler
+            result = command.handler(self.context, args)
+            if result is not None and hasattr(result, "__await__"):
+                await result
+            return True
+
+        # Unknown command
+        await self._mount_status(f"未知命令: {cmd_name}，使用 /help 查看可用命令", variant="error")
+        return True
+
+    async def _submit_text(self, text: str) -> None:
+        self._is_processing = True
+        composer = self.query_one(ComposerTextArea)
+        try:
+            await self.context.say(text)
+        except Exception as exc:
+            logger.debug(f"终端会话异常: {exc}")
+            self._debug(f"debug: exception: {exc}")
+            await self._mount_status(f"会话失败：{exc}", variant="error")
+        finally:
+            self._is_processing = False
+            self._sync_composer_height()
+            composer.focus()
+
+    async def _handle_context_event(self, event: BaseEvent) -> None:
+        match event:
+            case SessionMessageEvent(message=message):
+                logger.debug(f"[SessionMessageEvent] role={message.role}, segments={len(message.content)}")
+                if message.role == "assistant":
+                    # logger.debug(f"[SessionMessageEvent] assistant message, clearing {len(self._stream_previews)}...")
+                    await self._clear_stream_previews()
+                # logger.debug(f"[SessionMessageEvent] mounting message...")
+                await self._mount_message(message)
+                # Update context display after each message
+                await self._update_context_display()
+            case SessionStatusEvent(level=level, detail=detail):
+                logger.debug(f"终端收到状态事件: level={level.name}, detail={detail}")
+                if self.debug_mode and level == StatusLevel.DEBUG:
+                    self._debug(f"debug: status: {detail}")
+                    await self._mount_status(f"{detail}", variant="status")
+                elif level >= StatusLevel.ERROR:
+                    await self._mount_status(f"{detail}", variant="error")
+                elif level == StatusLevel.SUCCESS:
+                    await self._mount_status(f"{detail}", variant="success")
+            case AppExitEvent():
+                self.exit()
+            case SessionErrorEvent(error=error):
+                logger.debug(f"终端收到错误事件: {error}")
+                self._debug(f"debug: error: {error}")
+                await self._mount_status(error, variant="error")
+            case SessionResetEvent():
+                messages_view = self.query_one("#messages", VerticalScroll)
+                await messages_view.remove_children()
+                self._stream_previews.clear()
+                logger.debug("终端会话已重置")
+                self._debug("debug: session reset")
+                await self._update_context_display()  # Reset context display
+                self.call_after_refresh(self._focus_composer)
+            case _:
+                pass
+
+    async def _handle_stream_event(self, session_event: SessionStreamDeltaEvent | SessionStreamCompletedEvent) -> None:
+        if not isinstance(session_event, SessionStreamDeltaEvent):
+            return
+
+        # Get the actual message stream event from the session event wrapper
+        stream_event = session_event.stream_event
+        if not isinstance(stream_event, MessageStreamDeltaEvent):
+            return
+
+        match stream_event.segment:
+            case TextDetailSegment(text=text):
+                # Use unified preview for text - find or create one for this message index
+                message_index = stream_event.segment.index
+                preview_key = ("unified", message_index)
+                unified_row: UnifiedStreamPreviewRow | None = None
+                existing = self._stream_previews.get(preview_key)
+                if existing is None:
+                    # Create new unified preview row
+                    new_row = UnifiedStreamPreviewRow(message_index=message_index)
+                    self._stream_previews[preview_key] = new_row
+                    messages_view = self.query_one("#messages", VerticalScroll)
+                    await messages_view.mount(new_row)
+                    unified_row = new_row
+                elif isinstance(existing, UnifiedStreamPreviewRow):
+                    unified_row = existing
+                if unified_row is not None:
+                    await unified_row.append_text(text)
+                self.query_one("#messages", VerticalScroll).scroll_end(animate=False)
+
+            case ThinkDetailSegment(thought_process=thought_process):
+                # Use unified preview for thinking - find or create one for this message index
+                message_index = stream_event.segment.index
+                preview_key = ("unified", message_index)
+                unified_row: UnifiedStreamPreviewRow | None = None
+                existing = self._stream_previews.get(preview_key)
+                if existing is None:
+                    # Create new unified preview row
+                    new_row = UnifiedStreamPreviewRow(message_index=message_index)
+                    self._stream_previews[preview_key] = new_row
+                    messages_view = self.query_one("#messages", VerticalScroll)
+                    await messages_view.mount(new_row)
+                    unified_row = new_row
+                elif isinstance(existing, UnifiedStreamPreviewRow):
+                    unified_row = existing
+                if unified_row is not None:
+                    await unified_row.append_thinking(thought_process)
+                self.query_one("#messages", VerticalScroll).scroll_end(animate=False)
+
+            case ToolCallDetailSegment(
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                partial_arguments=partial_arguments,
+            ):
+                preview_key = ("tool", tool_call_id)
+                # Only show tool name prefix on first chunk to avoid repetition
+                is_first_chunk = preview_key not in self._stream_previews
+                if is_first_chunk:
+                    # Limit to 1 line for cleaner display in streaming mode
+                    formatted_args = _format_arguments(partial_arguments, max_lines=1) if partial_arguments else ""
+                    preview_text = (
+                        f"调用工具 · {tool_name} · {formatted_args}" if formatted_args else f"调用工具 · {tool_name}"
+                    )
+                else:
+                    preview_text = partial_arguments
+                # logger.debug(f"[_handle_stream_event] tool={tool_name}, first_chunk={is_first_chunk}")
+
+                tool_row: ToolPreviewRow | None = None
+                existing = self._stream_previews.get(preview_key)
+                if existing is None:
+                    # Create new tool preview row
+                    new_row = ToolPreviewRow()
+                    self._stream_previews[preview_key] = new_row
+                    messages_view = self.query_one("#messages", VerticalScroll)
+                    await messages_view.mount(new_row)
+                    tool_row = new_row
+                elif isinstance(existing, ToolPreviewRow):
+                    tool_row = existing
+                if tool_row is not None:
+                    await tool_row.append(preview_text)
+                self.query_one("#messages", VerticalScroll).scroll_end(animate=False)
+            case _:
+                return
+
+    async def _mount_message(self, message: Message) -> None:
+        # logger.debug(f"[_mount_message] START role={message.role}, segments={len(message.content)}")
+        messages_view = self.query_one("#messages", VerticalScroll)
+        row = MessageRow(message)
+        # logger.debug(f"[_mount_message] mounting MessageRow to messages_view")
+        await messages_view.mount(row)
+        # logger.debug(f"[_mount_message] MessageRow mounted, children count={len(row.children)}")
+        # Force refresh to ensure all children are properly displayed
+        row.refresh(layout=True)
+        # Also refresh the MessageWidget inside
+        refresh_count = 0
+        for child in row.children:
+            if hasattr(child, "refresh"):
+                child.refresh(layout=True)
+                refresh_count += 1
+                pass  # skip logging
+                # Refresh all grandchildren too
+                for grandchild in child.children:
+                    if hasattr(grandchild, "refresh"):
+                        grandchild.refresh(layout=True)
+                        refresh_count += 1
+                        pass  # skip logging
+        messages_view.scroll_end(animate=False)
+        # logger.debug(f"[_mount_message] DONE, total refreshed={refresh_count}")
+
+    async def _mount_status(self, text: str, *, variant: str = "status") -> None:
+        messages_view = self.query_one("#messages", VerticalScroll)
+        await messages_view.mount(StatusWidget(text, variant=variant))
+        messages_view.scroll_end(animate=False)
+
+    async def _clear_stream_previews(self) -> None:
+        # logger.debug(f"[_clear_stream_previews] START, count={len(self._stream_previews)}")
+        for key, row in list(self._stream_previews.items()):
+            pass  # skip logging
+            await row.close()
+            await row.remove()
+            pass  # skip logging
+        self._stream_previews.clear()
+        # logger.debug(f"[_clear_stream_previews] DONE")
+
+    async def action_toggle_thinking(self) -> None:
+        # Check if provider supports thinking
+        if not self.context.provider.thinking_supported:
+            await self._mount_status("当前模型不支持 Thinking 模式", variant="error")
+            return
+        self.context.thinking_mode = not self.context.thinking_mode
+        mode = "开启" if self.context.thinking_mode else "关闭"
+        await self._mount_status(f"Thinking 已{mode}")
+
+    async def action_clear_session(self) -> None:
+        await self.context.reset()
+
+    def action_interrupt(self) -> None:
+        """Interrupt the current LLM output stream."""
+        if self._is_processing:
+            self.context.interrupt()
+            self._debug("debug: interrupt requested")
+            self._ctrl_c_count = 0
+        else:
+            # Not processing, user might be trying to quit
+            self._ctrl_c_count += 1
+            if self._ctrl_c_count >= 2:
+                self.run_worker(self._mount_status("提示：使用 Ctrl+D 退出程序", variant="status"))
+                self._ctrl_c_count = 0
+
+    async def action_quit(self) -> None:
+        self.exit()
+
+    def on_mouse_scroll_up(self, event) -> None:
+        self._forward_scroll_to_history(event, step=-3)
+
+    def on_mouse_scroll_down(self, event) -> None:
+        self._forward_scroll_to_history(event, step=3)
+
+    def _focus_composer(self) -> None:
+        composer = self.query_one(ComposerTextArea)
+        composer.focus()
+
+    def _sync_composer_height(self) -> None:
+        composer = self.query_one(ComposerTextArea)
+        visible_lines = max(3, min(composer.wrapped_document.height, 8))
+        target_height = visible_lines + 7
+        # Respect CSS fractional height: only adjust if dynamic height would exceed bounds
+        css_height = composer.styles.height
+        if css_height is not None and not str(css_height).endswith("fr"):
+            composer.styles.height = target_height
+
+    def _forward_scroll_to_history(
+        self,
+        event,
+        *,
+        step: int,
+    ) -> None:
+        messages_view = self.query_one("#messages", MessageHistoryView)
+        if not messages_view.region.contains_point(event.screen_offset):
+            return
+
+        if messages_view.scroll_for_wheel(step):
+            event.stop()
+            event.prevent_default()
+
+    def _debug(self, message: str) -> None:
+        self.log(message)
+        if not self.debug_mode:
+            return
+
+        debug_panel = self.query_one("#debug-panel", RichLog)
+        debug_panel.write(message)
+
+    async def _confirm_tool_call(
+        self,
+        tool_call: ToolCall,
+        tool: Tool[object],
+    ) -> ToolConfirmationDecision:
+        if self._pending_tool_confirmation is not None:
+            return ToolConfirmationDecision(
+                approved=False,
+                reason="Another confirmation is already in progress",
+            )
+
+        self._pending_tool_confirmation = Future()
+        self._pending_tool_name = tool.name
+
+        arguments = _format_arguments(tool_call.function.arguments)
+
+        # Show approval dialog in container
+        container = self.query_one("#approval-container", Vertical)
+        dialog = ApprovalDialog(tool.name, arguments)
+        await container.mount(dialog)
+        dialog.focus()
+
+        # Set placeholder - direct input means reject with clarification
+        composer = self.query_one("#composer", ComposerTextArea)
+        composer.placeholder = "直接输入拒绝原因，Enter 发送……"
+
+        return await self._pending_tool_confirmation
+
+    async def _handle_confirmation_input(self, text: str) -> None:
+        normalized = text.strip()
+        lowered = normalized.lower()
+        tool_name = self._pending_tool_name or "unknown"
+
+        # [1] yes - approve once
+        if lowered in {"yes", "y", "1", "同意"}:
+            self._resolve_pending_confirmation(ToolConfirmationDecision(approved=True))
+            await self._mount_status(f"已同意工具调用: {tool_name}")
+            return
+
+        # [2] yes for this session - approve for entire session
+        if lowered in {"yes for this session", "session", "s", "2", "本次会话"}:
+            self._resolve_pending_confirmation(ToolConfirmationDecision(approved=True, session_approved=True))
+            await self._mount_status("已同意本次会话的所有工具调用")
+            return
+
+        # [3] no - reject without reason
+        if lowered in {"no", "n", "3", "拒绝"}:
+            self._resolve_pending_confirmation(ToolConfirmationDecision(approved=False))
+            await self._mount_status(f"已拒绝工具调用: {tool_name}")
+            return
+
+        # Any other text - reject with clarification (reason is the text itself)
+        if normalized:
+            self._resolve_pending_confirmation(
+                ToolConfirmationDecision(
+                    approved=False,
+                    reason=normalized,
+                    next_steps="请根据用户反馈调整",
+                )
+            )
+            await self._mount_status(f"已拒绝工具调用: {tool_name}，原因: {normalized}")
+            return
+
+        await self._mount_status(
+            "无效选项，请使用 Y/S/N 或直接输入拒绝原因。",
+            variant="error",
+        )
+
+    def _resolve_pending_confirmation(self, decision: ToolConfirmationDecision) -> None:
+        pending = self._pending_tool_confirmation
+        self._pending_tool_confirmation = None
+        self._pending_tool_name = None
+
+        # Remove approval dialog and restore placeholder
+        try:
+            container = self.query_one("#approval-container", Vertical)
+            for child in list(container.children):
+                child.remove()
+        except Exception:
+            pass
+
+        try:
+            composer = self.query_one("#composer", ComposerTextArea)
+            composer.placeholder = "输入消息，Enter 发送，Ctrl+Enter 换行……"
+        except Exception:
+            pass
+
+        if pending is None or pending.done():
+            return
+        pending.set_result(decision)
+
+    def _parse_rejection_clarification(self, text: str) -> tuple[str, str] | None:
+        parts = [part.strip() for part in text.split(";", maxsplit=1)]
+        if len(parts) != 2:
+            return None
+
+        reason, next_steps = parts
+        if not reason or not next_steps:
+            return None
+        return reason, next_steps
+
+
+def run_terminal(context: ChatContext, *, debug_mode: bool = False) -> None:
+    ChatTerminalApp(context, debug_mode=debug_mode).run()
