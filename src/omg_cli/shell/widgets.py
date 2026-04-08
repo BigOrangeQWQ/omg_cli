@@ -169,6 +169,12 @@ class ContextFooter(Footer):
 
     def update_context_display(self, context_tokens: int, max_context_size: int) -> None:
         """Update the context usage display."""
+        # Lazy lookup if reference lost (e.g., after recompose)
+        if self._context_widget is None:
+            try:
+                self._context_widget = self.query_one(ContextStatusWidget)
+            except Exception:
+                pass
         if self._context_widget is not None:
             self._context_widget.update_display(context_tokens, max_context_size)
 

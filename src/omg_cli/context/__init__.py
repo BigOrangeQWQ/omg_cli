@@ -283,6 +283,15 @@ class ChatContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, Todo
             # Keep default if provider doesn't support context_length
             pass
 
+    async def ensure_context_size(self) -> None:
+        """Ensure max_context_size is initialized from provider if not already set.
+
+        This method should be called before accessing context usage information
+        for display purposes. It's a no-op if the context size is already initialized.
+        """
+        if not self.token_usage.initial_context_size:
+            await self._update_max_context_size()
+
     async def reset(self) -> None:
         """Reset the chat context, clearing messages and token usage.
 

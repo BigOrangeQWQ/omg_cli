@@ -202,11 +202,8 @@ class ChatTerminalApp(App):
     async def _update_context_display(self) -> None:
         """Update the context usage display in the footer."""
         try:
-            # Get max context size from provider if not already set
-            if self.context.token_usage.max_context_size == 100000:
-                max_context = await self.context.provider.context_length()
-                if max_context and max_context > 0:
-                    self.context.token_usage.max_context_size = max_context
+            # Ensure context size is initialized (delegated to ChatContext)
+            await self.context.ensure_context_size()
 
             # Update the display
             footer = self.query_one(ContextFooter)
@@ -214,8 +211,8 @@ class ChatTerminalApp(App):
                 self.context.token_usage.context_tokens,
                 self.context.token_usage.max_context_size,
             )
-        except Exception:
-            pass  # Silently ignore if widget not ready or provider doesn't support context_length
+        except Exception as e:
+            logger.error(f"Failed to update context display: {e}")
 
     async def on_composer_text_area_submitted(self, event: ComposerTextArea.Submitted) -> None:
         text = event.value.strip()
