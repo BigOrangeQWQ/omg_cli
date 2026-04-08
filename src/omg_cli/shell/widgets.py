@@ -561,7 +561,13 @@ class ComposerTextArea(TextArea):
         # Handle tab completion when palette is not visible
         if event.key == "tab":
             # Check if current word is a command that has a completer
-            if palette and current_word.startswith("/") and not current_word.endswith(" "):
+            # Only trigger command completion if "/" is the first character of input
+            if (
+                palette
+                and current_word.startswith("/")
+                and not current_word.endswith(" ")
+                and self.text.startswith("/")
+            ):
                 registry = self._get_registry()
                 cmd = registry.get(current_word)
                 if cmd and cmd.completer:
@@ -643,7 +649,9 @@ class ComposerTextArea(TextArea):
             word = self._get_current_word()
             app = cast(ChatTerminalApp, self.app)
             pal = app.query_one("#command-palette", CommandPalette)
-            if word.startswith("/"):
+            text = self.text
+            # Only trigger command completion if "/" is the first character of input
+            if word.startswith("/") and text.startswith("/"):
                 app.run_worker(pal.show_commands(word))
             elif word.startswith("!"):
                 # Directory completion
