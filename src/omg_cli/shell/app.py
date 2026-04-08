@@ -312,11 +312,14 @@ class ChatTerminalApp(App):
                 # Update context display after each message
                 await self._update_context_display()
             case SessionStatusEvent(level=level, detail=detail):
-                logger.debug(f"Status event received: level={level.name}, detail={detail}")
                 if level >= StatusLevel.ERROR:
                     await self._mount_status(f"{detail}", variant="error")
                 elif level == StatusLevel.SUCCESS:
                     await self._mount_status(f"{detail}", variant="success")
+                elif level >= StatusLevel.INFO:
+                    await self._mount_status(f"{detail}", variant="status")
+                else:
+                    logger.debug(f"Status event received: level={level.name}, detail={detail}")
             case AppExitEvent():
                 self.exit()
             case SessionErrorEvent(error=error):
@@ -457,12 +460,13 @@ class ChatTerminalApp(App):
 
     async def _clear_stream_previews(self) -> None:
         # logger.debug(f"[_clear_stream_previews] START, count={len(self._stream_previews)}")
-        for key, row in list(self._stream_previews.items()):
+        rows = list(self._stream_previews.values())
+        self._stream_previews.clear()
+        for row in rows:
             pass  # skip logging
             await row.close()
             await row.remove()
             pass  # skip logging
-        self._stream_previews.clear()
         # logger.debug(f"[_clear_stream_previews] DONE")
 
     async def action_toggle_thinking(self) -> None:
