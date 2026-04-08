@@ -410,6 +410,10 @@ class ChatContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, Todo
                             round_segments.append(segment)
                         case UsageSegment() as usage:
                             # Accumulate token usage for this thinking round
+                            await self.logger.debug(
+                                f"Token usage update from stream: input={usage.input_tokens}, \
+                                output={usage.output_tokens}"
+                            )
                             self.token_usage.grow_by_usage(usage)
                         case StopSegment(reason=reason):
                             if reason == "tool_calls":
