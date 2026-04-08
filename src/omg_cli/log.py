@@ -2,7 +2,7 @@ import os
 
 from loguru import logger
 
-# Remove default stderr handler to only log to file
+# Remove default stderr handler
 logger.remove()
 
 level = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -16,3 +16,6 @@ logger.add(
     enqueue=True,
     level=level,
 )
+
+# Disable by default, enable with --debug
+logger.disable("src.omg_cli")

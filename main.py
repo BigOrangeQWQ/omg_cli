@@ -29,9 +29,12 @@ def main():
         type=str,
         help="Specify model name to use",
     )
-    logger.info("Starting OMG CLI...")
-
     args = parser.parse_args()
+
+    # Enable logging only in debug mode
+    if args.debug:
+        logger.enable("src.omg_cli")
+        logger.info("Starting OMG CLI in DEBUG mode")
 
     load_dotenv()  # Load environment variables from .env file
 
