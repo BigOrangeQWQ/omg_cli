@@ -459,6 +459,10 @@ class MetaContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, Todo
             await self.logger.debug(f"Assistant request started: {self.provider.model_name}")
             logger.debug(f"Current token usage before request: {self.token_usage}")
 
+            # Auto-compact context if remaining space drops below 25%
+            if self.token_usage.max_context_size > 0 and self.token_usage.remaining_usage <= 25.0:
+                await self.compact_context()
+
             provider_kwargs = dict(kwargs)
             max_tokens = provider_kwargs.pop("max_tokens", None)
 
