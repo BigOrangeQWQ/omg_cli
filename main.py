@@ -4,8 +4,10 @@
 import argparse
 import sys
 
-from src.omg_cli.abstract.openai_legacy import OpenAILegacy
-from src.omg_cli.config import get_config_manager
+from dotenv import load_dotenv
+
+from src.omg_cli.abstract.null import NullAdapter
+from src.omg_cli.config import get_adapter_manager
 from src.omg_cli.context import ChatContext
 from src.omg_cli.log import logger
 from src.omg_cli.prompts.system_prompt import SYSTEM_PROMPT
@@ -31,37 +33,27 @@ def main():
 
     args = parser.parse_args()
 
-    # Load configuration
-    config_manager = get_config_manager()
+    load_dotenv()  # Load environment variables from .env file
 
-    # Check if any models are configured
-    if not config_manager.has_models():
-        logger.info("未配置任何模型，请先使用 /import 命令导入模型")
-        logger.info("启动 TUI 后，输入 /import 开始导入")
-        # Continue to TUI which will show import wizard automatically
+    # Get adapter manager
+    adapter_manager = get_adapter_manager()
 
-    # Get default or specified model
-    model_config = None
+    # Get adapter for specified or default model
+    adapter = None
     if args.model:
-        model_config = config_manager.get_model(args.model)
-        if model_config is None:
+        try:
+            adapter = adapter_manager.get_adapter(args.model)
+        except ValueError:
             logger.error(f"错误: 未找到模型 '{args.model}'")
-            logger.info(f"可用的模型: {[m.name for m in config_manager.list_models()]}")
+            logger.info(f"可用的模型: {adapter_manager.list_adapters()}")
             sys.exit(1)
     else:
-        model_config = config_manager.get_default_model()
+        adapter = adapter_manager.default_adapter
 
-    # If no model configured, create a placeholder context
-    # The TUI will prompt for import
-    if model_config is None:
-        # Create a dummy adapter that will be replaced after import
-        adapter = OpenAILegacy(
-            api_key="placeholder",
-            model="placeholder",
-            base_url="https://api.openai.com/v1",
-        )
-    else:
-        adapter = model_config.create_adapter()
+    # If no model configured, use NullAdapter (TUI will prompt for import)
+    if adapter is None:
+        logger.info("未配置任何模型，请先使用 /import 命令导入模型")
+        adapter = NullAdapter()
 
     # Create chat context
     context = ChatContext(
