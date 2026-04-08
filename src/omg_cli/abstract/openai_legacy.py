@@ -55,47 +55,6 @@ if TYPE_CHECKING:
         ContentArrayOfContentPart,
     )
 
-# OpenAI model context length mapping (model name prefix -> context length)
-# Used when the API doesn't expose max_context_length
-OPENAI_CONTEXT_LENGTHS: dict[str, int] = {
-    # GPT-4o series
-    "gpt-4o": 128000,
-    "gpt-4o-mini": 128000,
-    # GPT-4 series
-    "gpt-4-turbo": 128000,
-    "gpt-4-0125-preview": 128000,
-    "gpt-4-1106-preview": 128000,
-    "gpt-4-vision-preview": 128000,
-    "gpt-4-32k": 32768,
-    "gpt-4": 8192,
-    # GPT-3.5 series
-    "gpt-3.5-turbo-0125": 16385,
-    "gpt-3.5-turbo-1106": 16385,
-    "gpt-3.5-turbo-16k": 16384,
-    "gpt-3.5-turbo": 4096,
-    # o1 series
-    "o1-preview": 128000,
-    "o1-mini": 128000,
-}
-
-
-def _get_context_length_from_model_name(model_name: str) -> int:
-    """Get context length from model name using prefix matching.
-
-    Returns 100000 (100K) as default for unknown models.
-    """
-    # Exact match first
-    if model_name in OPENAI_CONTEXT_LENGTHS:
-        return OPENAI_CONTEXT_LENGTHS[model_name]
-
-    # Prefix match (longest prefix first)
-    for prefix in sorted(OPENAI_CONTEXT_LENGTHS.keys(), key=len, reverse=True):
-        if model_name.startswith(prefix):
-            return OPENAI_CONTEXT_LENGTHS[prefix]
-
-    # Default to 100K for unknown models
-    return 100000
-
 
 class OpenAILegacy(ChatAdapter):
     def __init__(
@@ -135,7 +94,7 @@ class OpenAILegacy(ChatAdapter):
         Uses a mapping table since OpenAI's API doesn't expose max_context_length.
         Returns 100000 (100K) for unknown models.
         """
-        return _get_context_length_from_model_name(self.model)
+        return 100000
 
     def _get_segment_index(
         self,

@@ -42,7 +42,6 @@ from openai.types.responses.response_output_refusal import ResponseOutputRefusal
 from openai.types.shared_params.function_definition import FunctionDefinition
 
 from src.omg_cli.abstract import ChatAdapter
-from src.omg_cli.abstract.openai_legacy import _get_context_length_from_model_name
 from src.omg_cli.abstract.utils import Messages, to_messages
 from src.omg_cli.types.message import (
     ImageSegment,
@@ -103,9 +102,9 @@ class OpenAIAPI(ChatAdapter):
         """Get the model's context window length in tokens.
 
         Uses a mapping table since OpenAI's API doesn't expose max_context_length.
-        Returns 100000 (100K) for unknown models.
+        Returns 150000 (150K) for unknown models (Response API has higher limits).
         """
-        return _get_context_length_from_model_name(self.model)
+        return 150000
 
     def _get_segment_index(
         self,

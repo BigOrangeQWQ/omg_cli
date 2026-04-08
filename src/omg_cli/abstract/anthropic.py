@@ -92,10 +92,14 @@ class AnthropicAPI(ChatAdapter):
         """Get the model's context window length in tokens.
 
         Uses a mapping table since Anthropic's API doesn't expose max_context_length.
-        Default to 100k tokens if model is unknown or API call fails.
+        Default to 150k tokens if model is unknown or API call fails.
         """
-        model = await self.client.models.retrieve(self.model)
-        return model.max_input_tokens or 100000
+        try:
+            model = await self.client.models.retrieve(self.model)
+            return model.max_input_tokens or 150000
+        except Exception:
+            # API may not support models.retrieve, return default
+            return 150000
 
     def _build_request_kwargs(
         self,
