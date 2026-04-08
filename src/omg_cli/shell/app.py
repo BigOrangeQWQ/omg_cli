@@ -283,7 +283,8 @@ class ChatTerminalApp(App):
             await self.context.send(text)
 
             # After processing, check if there are pending messages
-            if self.context.pending_messages:
+            # Use a loop to handle messages that arrive during processing
+            while self.context.pending_messages:
                 pending = list(self.context.pending_messages)
                 self.context.pending_messages.clear()
                 await self._mount_status(f"发送队列中的 {len(pending)} 条消息...", variant="info")
