@@ -54,6 +54,10 @@ class SessionResetEvent(BaseEvent):
     type: Literal["reset"] = "reset"
 
 
+class SessionLoadedEvent(BaseEvent):
+    type: Literal["loaded"] = "loaded"
+
+
 class SessionStreamDeltaEvent(BaseEvent):
     stream_event: MessageStreamEvent
     type: Literal["stream"] = "stream"

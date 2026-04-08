@@ -6,19 +6,21 @@ from textual.binding import BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
 
 from src.omg_cli.config import get_config_manager
-from src.omg_cli.context import (
+from src.omg_cli.context import ChatContext
+from src.omg_cli.context.tool_manager import ToolConfirmationDecision
+from src.omg_cli.log import logger
+from src.omg_cli.types.event import (
+    AppExitEvent,
     BaseEvent,
-    ChatContext,
     SessionErrorEvent,
+    SessionLoadedEvent,
     SessionMessageEvent,
     SessionResetEvent,
     SessionStatusEvent,
     SessionStreamCompletedEvent,
     SessionStreamDeltaEvent,
-    ToolConfirmationDecision,
+    StatusLevel,
 )
-from src.omg_cli.log import logger
-from src.omg_cli.types.event import AppExitEvent, StatusLevel
 from src.omg_cli.types.message import (
     Message,
     MessageStreamDeltaEvent,
@@ -96,9 +98,7 @@ class ChatTerminalApp(App):
         yield ContextFooter()
 
     async def on_mount(self) -> None:
-        logger.debug(
-            f"provider={self.context.provider.type}:{self.context.provider.model_name}"
-        )
+        logger.debug(f"provider={self.context.provider.type}:{self.context.provider.model_name}")
 
         messages_view = self.query_one("#messages", VerticalScroll)
         messages_view.show_vertical_scrollbar = False
@@ -198,6 +198,10 @@ class ChatTerminalApp(App):
 
             # Update the display
             footer = self.query_one(ContextFooter)
+            logger.debug(
+                f"Current context tokens: {self.context.token_usage.context_tokens},\
+                    max: {self.context.token_usage.max_context_size}"
+            )
             footer.update_context_display(
                 self.context.token_usage.context_tokens,
                 self.context.token_usage.max_context_size,
@@ -302,9 +306,8 @@ class ChatTerminalApp(App):
     async def _handle_context_event(self, event: BaseEvent) -> None:
         match event:
             case SessionMessageEvent(message=message):
-
                 if message.role == "assistant":
-                        await self._clear_stream_previews()
+                    await self._clear_stream_previews()
                 await self._mount_message(message)
                 # Update context display after each message
                 await self._update_context_display()
@@ -325,6 +328,16 @@ class ChatTerminalApp(App):
                 self._stream_previews.clear()
                 logger.debug("Session reset")
                 await self._update_context_display()  # Reset context display
+                self.call_after_refresh(self._focus_composer)
+            case SessionLoadedEvent():
+                messages_view = self.query_one("#messages", VerticalScroll)
+                await messages_view.remove_children()
+                self._stream_previews.clear()
+                # Re-mount all loaded messages
+                for message in self.context.display_messages:
+                    await self._mount_message(message)
+                logger.debug("Session loaded")
+                await self._update_context_display()
                 self.call_after_refresh(self._focus_composer)
             case _:
                 pass
@@ -479,6 +492,8 @@ class ChatTerminalApp(App):
                 self._ctrl_c_count = 0
 
     async def action_quit(self) -> None:
+        # Print session UUID before exiting so user can resume later
+        print(f"\n[Session UUID: {self.context.session_id}]")
         self.exit()
 
     def on_mouse_scroll_up(self, event) -> None:

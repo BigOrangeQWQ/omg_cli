@@ -2,6 +2,31 @@ from src.omg_cli.context import ChatContext
 from src.omg_cli.types.skill import normalize_skill_id
 
 
+async def compact_context(ctx: ChatContext, args: str) -> None:
+    """Compact conversation context by summarizing older messages. Usage: /compact [keep_recent]"""
+    keep_recent = 4  # Default value
+    if args.strip():
+        try:
+            keep_recent = int(args.strip())
+            if keep_recent < 1:
+                await ctx.logger.error("参数错误: keep_recent 必须大于 0")
+                return
+        except ValueError:
+            await ctx.logger.error("用法: /compact [保留消息数]")
+            return
+
+    await ctx.logger.info(f"正在压缩上下文，保留最近 {keep_recent} 条消息...")
+
+    try:
+        result = await ctx.compact_context(keep_recent=keep_recent)
+        if result is None:
+            await ctx.logger.info("消息数量不足，无需压缩")
+        else:
+            await ctx.logger.success("上下文压缩完成")
+    except Exception as e:
+        await ctx.logger.error(f"压缩失败: {e}")
+
+
 async def switch_model(ctx: ChatContext, args: str) -> None:
     """Switch to another model. Usage: /switch <model_name>"""
     if not args.strip():
@@ -250,6 +275,18 @@ def register_commands(ctx: ChatContext) -> None:
             description_zh="Anthropic Skills 管理",
             handler=skills_handler,
         ),
+        MetaCommand(
+            name="history",
+            description="Session history management",
+            description_zh="会话历史管理",
+            handler=history_handler,
+        ),
+        MetaCommand(
+            name="compact",
+            description="Compact conversation context by summarizing older messages",
+            description_zh="压缩上下文，总结较早的消息",
+            handler=compact_context,
+        ),
     ]
 
     for cmd in commands:
@@ -326,9 +363,7 @@ async def skills_handler(ctx: ChatContext, args: str) -> None:
         case "clear":
             await clear_skills(ctx, rest)
         case _:
-            await ctx.logger.error(
-                f"Unknown skills sub-command: {subcmd}. Available: list, add, remove, clear"
-            )
+            await ctx.logger.error(f"Unknown skills sub-command: {subcmd}. Available: list, add, remove, clear")
 
 
 async def mcp_handler(ctx: ChatContext, args: str) -> None:
@@ -360,3 +395,108 @@ async def mcp_handler(ctx: ChatContext, args: str) -> None:
             await ctx.logger.error(
                 f"Unknown MCP sub-command: {subcmd}. Available: list, connect, disconnect, reload, on, off, status"
             )
+
+
+async def list_history(ctx: ChatContext, args: str) -> None:
+    """List all saved sessions (history)."""
+    sessions = ctx.list_saved_sessions()
+    if not sessions:
+        await ctx.logger.info("No saved sessions found.")
+        return
+
+    lines = ["Saved sessions (newest first):"]
+    for i, session in enumerate(sessions, 1):
+        title = session.title or "Untitled"
+        updated = session.updated_at.strftime("%Y-%m-%d %H:%M")
+        current = " (current)" if session.session_id == ctx.session_id else ""
+        lines.append(f"  {i}. {title}")
+        lines.append(f"     UUID: {session.session_id}")
+        lines.append(f"     Updated: {updated}{current}")
+        lines.append("")
+
+    lines.append("Use '/history load <uuid>' or '/history load <number>' to load a session.")
+    await ctx.logger.info("\n".join(lines))
+
+
+async def load_history_session(ctx: ChatContext, args: str) -> None:
+    """Load a session by UUID or index. Usage: /history load <uuid_or_number>"""
+    identifier = args.strip()
+    if not identifier:
+        await ctx.logger.error("Usage: /history load <uuid_or_number>")
+        return
+
+    # Try to interpret as an index first
+    sessions = ctx.list_saved_sessions()
+    session_id = None
+
+    try:
+        index = int(identifier)
+        if 1 <= index <= len(sessions):
+            session_id = sessions[index - 1].session_id
+        else:
+            await ctx.logger.error(f"Invalid session number: {index}. Use /history to see available sessions.")
+            return
+    except ValueError:
+        # Not a number, treat as UUID
+        session_id = identifier
+
+    # Try to load the session
+    if ctx.load_session(session_id):
+        await ctx.logger.success(f"Loaded session: {session_id}")
+    else:
+        await ctx.logger.error(f"Session not found: {identifier}")
+
+
+async def delete_history_session(ctx: ChatContext, args: str) -> None:
+    """Delete a session by UUID or index. Usage: /history delete <uuid_or_number>"""
+    identifier = args.strip()
+    if not identifier:
+        await ctx.logger.error("Usage: /history delete <uuid_or_number>")
+        return
+
+    # Try to interpret as an index first
+    sessions = ctx.list_saved_sessions()
+    session_id = None
+
+    try:
+        index = int(identifier)
+        if 1 <= index <= len(sessions):
+            session_id = sessions[index - 1].session_id
+        else:
+            await ctx.logger.error(f"Invalid session number: {index}. Use /history to see available sessions.")
+            return
+    except ValueError:
+        # Not a number, treat as UUID
+        session_id = identifier
+
+    # Prevent deleting current session
+    if session_id == ctx.session_id:
+        await ctx.logger.error("Cannot delete the current session. Switch to another session first.")
+        return
+
+    # Try to delete the session
+    if ctx.delete_session(session_id):
+        await ctx.logger.success(f"Deleted session: {session_id}")
+    else:
+        await ctx.logger.error(f"Session not found: {identifier}")
+
+
+async def history_handler(ctx: ChatContext, args: str) -> None:
+    """Route history sub-commands."""
+    parts = args.strip().split(maxsplit=1)
+    if not parts:
+        await list_history(ctx, "")
+        return
+
+    subcmd = parts[0].lower()
+    rest = parts[1] if len(parts) > 1 else ""
+
+    match subcmd:
+        case "list" | "ls":
+            await list_history(ctx, rest)
+        case "load":
+            await load_history_session(ctx, rest)
+        case "delete" | "rm":
+            await delete_history_session(ctx, rest)
+        case _:
+            await ctx.logger.error(f"Unknown history sub-command: {subcmd}. Available: list, load, delete")
