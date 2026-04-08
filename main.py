@@ -65,7 +65,7 @@ def main():
     )
 
     # Run TUI (this will block until app exits)
-    run_terminal(context, debug_mode=args.debug)
+    run_terminal(context)
 
 
 if __name__ == "__main__":

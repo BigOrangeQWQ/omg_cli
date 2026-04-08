@@ -4,7 +4,6 @@ from typing import ClassVar
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import RichLog
 
 from src.omg_cli.config import get_config_manager
 from src.omg_cli.context import (
@@ -61,10 +60,9 @@ class ChatTerminalApp(App):
         ("ctrl+d", "quit", "退出"),
     ]
 
-    def __init__(self, context: ChatContext, *, debug_mode: bool = False) -> None:
+    def __init__(self, context: ChatContext) -> None:
         super().__init__()
         self.context = context
-        self.debug_mode = debug_mode
         self._stream_previews: dict[tuple[str, str | int | None], PreviewRow] = {}
         self._pending_tool_confirmation: Future[ToolConfirmationDecision] | None = None
         self._pending_tool_name: str | None = None
@@ -94,23 +92,16 @@ class ChatTerminalApp(App):
                 yield PendingMessagesDisplay(id="pending-messages")
                 yield Vertical(id="approval-container")
                 yield ComposerTextArea(placeholder="输入消息，Enter 发送，Ctrl+Enter 换行，/ 查看命令……")
-            yield RichLog(id="debug-panel", wrap=True, markup=False, highlight=False)
         # Custom footer with context status on the right
         yield ContextFooter()
 
     async def on_mount(self) -> None:
-        if self.debug_mode:
-            self.add_class("-debug")
-
         logger.debug(
-            f"provider={self.context.provider.type}:{self.context.provider.model_name}, mode={self.debug_mode}"
+            f"provider={self.context.provider.type}:{self.context.provider.model_name}"
         )
 
         messages_view = self.query_one("#messages", VerticalScroll)
         messages_view.show_vertical_scrollbar = False
-
-        debug_panel = self.query_one("#debug-panel", RichLog)
-        debug_panel.show_vertical_scrollbar = False
 
         # Register event handlers with context's event manager
         self.context.register_event_handler(BaseEvent, self._handle_context_event)
@@ -119,7 +110,7 @@ class ChatTerminalApp(App):
 
         for message in self.context.messages:
             await self._mount_message(message)
-        self._debug(f"debug: connected: {self.context.provider.type}:{self.context.provider.model_name}")
+
         self._sync_composer_height()
         self._focus_composer()
 
@@ -128,13 +119,13 @@ class ChatTerminalApp(App):
         config_manager = get_config_manager()
         model_config = config_manager.get_default_model()
         if model_config:
-            await self.logger.info(f"当前模型: {model_config.name} ({model_config.model})")
+            await self.logger.info(f"Current model: {model_config.name} ({model_config.model})")
 
     async def check_and_show_import_wizard(self) -> None:
         """Check if models exist, show import wizard if not, otherwise show current model."""
         config_manager = get_config_manager()
         if not config_manager.has_models():
-            await self.logger.info("未配置任何模型，请先导入模型")
+            await self.logger.info("No models configured. Please import a model first")
             await self.start_import_wizard()
         else:
             # Show current model info
@@ -171,7 +162,7 @@ class ChatTerminalApp(App):
         model_config = config_manager.get_default_model()
 
         if model_config is None:
-            await self.logger.error("没有可用的模型配置")
+            await self.logger.error("No model configuration available")
             return
 
         # Use the new switch_model method on context
@@ -251,7 +242,7 @@ class ChatTerminalApp(App):
             pending_display.update_messages(self.context.pending_messages)
             return
 
-        logger.debug(f"终端提交用户输入: {text[:80]!r}")
+        logger.debug(f"User input submitted: {text[:80]!r}")
         composer = self.query_one(ComposerTextArea)
         composer.load_text("")
         self._sync_composer_height()
@@ -277,7 +268,7 @@ class ChatTerminalApp(App):
             return True
 
         # Unknown command
-        await self.logger.error(f"未知命令: {cmd_name}，使用 /help 查看可用命令")
+        await self.logger.error(f"Unknown command: {cmd_name}, use /help for available commands")
         return True
 
     async def _submit_text(self, text: str) -> None:
@@ -295,12 +286,11 @@ class ChatTerminalApp(App):
                 # Update pending messages display (clear if empty)
                 pending_display = self.query_one("#pending-messages", PendingMessagesDisplay)
                 pending_display.update_messages(self.context.pending_messages)
-                await self.logger.info(f"发送队列中的 {len(pending)} 条消息...")
+                await self.logger.info(f"Sending {len(pending)} pending messages...")
                 await self.context.send(pending)
         except Exception as exc:
-            logger.debug(f"终端会话异常: {exc}")
-            self._debug(f"debug: exception: {exc}")
-            await self.logger.error(f"会话失败：{exc}")
+            logger.debug(f"Session exception: {exc}")
+            await self.logger.error(f"Session failed: {exc}")
         finally:
             self._is_processing = False
             # Clear pending messages display when done
@@ -312,35 +302,28 @@ class ChatTerminalApp(App):
     async def _handle_context_event(self, event: BaseEvent) -> None:
         match event:
             case SessionMessageEvent(message=message):
-                logger.debug(f"[SessionMessageEvent] role={message.role}, segments={len(message.content)}")
+
                 if message.role == "assistant":
-                    # logger.debug(f"[SessionMessageEvent] assistant message, clearing {len(self._stream_previews)}...")
-                    await self._clear_stream_previews()
-                # logger.debug(f"[SessionMessageEvent] mounting message...")
+                        await self._clear_stream_previews()
                 await self._mount_message(message)
                 # Update context display after each message
                 await self._update_context_display()
             case SessionStatusEvent(level=level, detail=detail):
-                logger.debug(f"终端收到状态事件: level={level.name}, detail={detail}")
-                if self.debug_mode and level == StatusLevel.DEBUG:
-                    self._debug(f"debug: status: {detail}")
-                    await self._mount_status(f"{detail}", variant="status")
-                elif level >= StatusLevel.ERROR:
+                logger.debug(f"Status event received: level={level.name}, detail={detail}")
+                if level >= StatusLevel.ERROR:
                     await self._mount_status(f"{detail}", variant="error")
                 elif level == StatusLevel.SUCCESS:
                     await self._mount_status(f"{detail}", variant="success")
             case AppExitEvent():
                 self.exit()
             case SessionErrorEvent(error=error):
-                logger.debug(f"终端收到错误事件: {error}")
-                self._debug(f"debug: error: {error}")
+                logger.debug(f"Error event received: {error}")
                 await self._mount_status(error, variant="error")
             case SessionResetEvent():
                 messages_view = self.query_one("#messages", VerticalScroll)
                 await messages_view.remove_children()
                 self._stream_previews.clear()
-                logger.debug("终端会话已重置")
-                self._debug("debug: session reset")
+                logger.debug("Session reset")
                 await self._update_context_display()  # Reset context display
                 self.call_after_refresh(self._focus_composer)
             case _:
@@ -472,11 +455,11 @@ class ChatTerminalApp(App):
     async def action_toggle_thinking(self) -> None:
         # Check if provider supports thinking
         if not self.context.provider.thinking_supported:
-            await self.logger.error("当前模型不支持 Thinking 模式")
+            await self.logger.error("Current model does not support Thinking mode")
             return
         self.context.thinking_mode = not self.context.thinking_mode
-        mode = "开启" if self.context.thinking_mode else "关闭"
-        await self.logger.info(f"Thinking 已{mode}")
+        mode = "enabled" if self.context.thinking_mode else "disabled"
+        await self.logger.info(f"Thinking {mode}")
 
     async def action_clear_session(self) -> None:
         await self.context.reset()
@@ -485,14 +468,14 @@ class ChatTerminalApp(App):
         """Interrupt the current LLM output stream."""
         if self._is_processing:
             self.context.interrupt()
-            await self.logger.error("interrupt by user")
+            await self.logger.error("Interrupted by user")
 
             self._ctrl_c_count = 0
         else:
             # Not processing, user might be trying to quit
             self._ctrl_c_count += 1
             if self._ctrl_c_count >= 2:
-                await self.logger.info("提示：使用 Ctrl+D 退出程序")
+                await self.logger.info("Hint: Use Ctrl+D to exit")
                 self._ctrl_c_count = 0
 
     async def action_quit(self) -> None:
@@ -530,14 +513,6 @@ class ChatTerminalApp(App):
         if messages_view.scroll_for_wheel(step):
             event.stop()
             event.prevent_default()
-
-    def _debug(self, message: str) -> None:
-        self.log(message)
-        if not self.debug_mode:
-            return
-
-        debug_panel = self.query_one("#debug-panel", RichLog)
-        debug_panel.write(message)
 
     async def _confirm_tool_call(
         self,
@@ -577,19 +552,19 @@ class ChatTerminalApp(App):
         # [1] yes - approve once
         if lowered in {"yes", "y", "1", "同意"}:
             self._resolve_pending_confirmation(ToolConfirmationDecision(approved=True))
-            await self.logger.info(f"已同意工具调用: {tool_name}")
+            await self.logger.info(f"Tool call approved: {tool_name}")
             return
 
         # [2] yes for this session - approve for entire session
         if lowered in {"yes for this session", "session", "s", "2", "本次会话"}:
             self._resolve_pending_confirmation(ToolConfirmationDecision(approved=True, session_approved=True))
-            await self.logger.info("已同意本次会话的所有工具调用")
+            await self.logger.info("All tool calls approved for this session")
             return
 
         # [3] no - reject without reason
         if lowered in {"no", "n", "3", "拒绝"}:
             self._resolve_pending_confirmation(ToolConfirmationDecision(approved=False))
-            await self.logger.info(f"已拒绝工具调用: {tool_name}")
+            await self.logger.info(f"Tool call rejected: {tool_name}")
             return
 
         # Any other text - reject with clarification (reason is the text itself)
@@ -601,7 +576,7 @@ class ChatTerminalApp(App):
                     next_steps="请根据用户反馈调整",
                 )
             )
-            await self.logger.info(f"已拒绝工具调用: {tool_name}，原因: {normalized}")
+            await self.logger.info(f"Tool call rejected: {tool_name}, reason: {normalized}")
             return
 
         await self.logger.error(
@@ -649,5 +624,5 @@ class ChatTerminalApp(App):
         return reason, next_steps
 
 
-def run_terminal(context: ChatContext, *, debug_mode: bool = False) -> None:
-    ChatTerminalApp(context, debug_mode=debug_mode).run()
+def run_terminal(context: ChatContext) -> None:
+    ChatTerminalApp(context).run()

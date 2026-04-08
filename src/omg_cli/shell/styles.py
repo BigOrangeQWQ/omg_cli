@@ -59,21 +59,6 @@ Screen {
     background: transparent;
 }
 
-#debug-panel {
-    width: 34;
-    min-width: 24;
-    border-left: solid $panel;
-    padding: 1 1 1 0;
-    display: none;
-    scrollbar-visibility: hidden;
-    scrollbar-size-vertical: 0;
-    scrollbar-size-horizontal: 0;
-}
-
-.-debug #debug-panel {
-    display: block;
-}
-
 .message-row,
 .stream-row {
     width: 1fr;
