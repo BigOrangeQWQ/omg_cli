@@ -246,6 +246,34 @@ Markdown.message__text {
     background: $primary 20%;
 }
 
+/* Pending Messages Display */
+.pending-messages-display {
+    width: 100%;
+    height: auto;
+    border: solid $primary-darken-2;
+    padding: 0 1;
+    background: $surface-darken-1;
+    margin: 0 0 1 0;
+    display: none;
+}
+
+.pending-messages-title {
+    text-style: bold;
+    color: $primary;
+    height: 1;
+}
+
+.pending-messages-content {
+    width: 100%;
+    height: auto;
+}
+
+.pending-message-item {
+    color: $text-muted;
+    height: 1;
+    text-style: italic;
+}
+
 #confirmation-bar {
     width: 1fr;
     height: auto;

@@ -40,6 +40,7 @@ from .widgets import (
     ContextFooter,
     MessageHistoryView,
     MessageRow,
+    PendingMessagesDisplay,
     PreviewRow,
     StatusWidget,
     ToolPreviewRow,
@@ -74,6 +75,11 @@ class ChatTerminalApp(App):
         self.context.set_tool_confirmation_handler(self._confirm_tool_call)
         self._register_default_commands()
 
+    @property
+    def logger(self):
+        """Get the context logger for sending status messages."""
+        return self.context.logger
+
     def _register_default_commands(self) -> None:
         """Register default meta commands."""
         from .command_definitions import register_commands
@@ -85,6 +91,7 @@ class ChatTerminalApp(App):
             with Vertical(id="chat-panel"):
                 yield MessageHistoryView(id="messages")
                 yield CommandPalette()
+                yield PendingMessagesDisplay(id="pending-messages")
                 yield Vertical(id="approval-container")
                 yield ComposerTextArea(placeholder="输入消息，Enter 发送，Ctrl+Enter 换行，/ 查看命令……")
             yield RichLog(id="debug-panel", wrap=True, markup=False, highlight=False)
@@ -121,13 +128,13 @@ class ChatTerminalApp(App):
         config_manager = get_config_manager()
         model_config = config_manager.get_default_model()
         if model_config:
-            await self._mount_status(f"当前模型: {model_config.name} ({model_config.model})")
+            await self.logger.info(f"当前模型: {model_config.name} ({model_config.model})")
 
     async def check_and_show_import_wizard(self) -> None:
         """Check if models exist, show import wizard if not, otherwise show current model."""
         config_manager = get_config_manager()
         if not config_manager.has_models():
-            await self._mount_status("未配置任何模型，请先导入模型")
+            await self.logger.info("未配置任何模型，请先导入模型")
             await self.start_import_wizard()
         else:
             # Show current model info
@@ -154,7 +161,7 @@ class ChatTerminalApp(App):
         messages_view = self.query_one("#messages", VerticalScroll)
         await messages_view.remove_children()
         # Show success message
-        await self._mount_status(f"✓ 模型 '{model_name}' 导入成功")
+        await self.logger.success(f"✓ 模型 '{model_name}' 导入成功")
         # Reload model
         await self.reload_model()
 
@@ -164,7 +171,7 @@ class ChatTerminalApp(App):
         model_config = config_manager.get_default_model()
 
         if model_config is None:
-            await self._mount_status("没有可用的模型配置", variant="error")
+            await self.logger.error("没有可用的模型配置")
             return
 
         # Use the new switch_model method on context
@@ -242,8 +249,9 @@ class ChatTerminalApp(App):
             self.context.pending_messages.append(text)
             composer.load_text("")
             self._sync_composer_height()
-            queue_count = len(self.context.pending_messages)
-            await self._mount_status(f"消息已加入队列 (当前队列: {queue_count} 条)", variant="info")
+            # Update the pending messages display
+            pending_display = self.query_one("#pending-messages", PendingMessagesDisplay)
+            pending_display.update_messages(self.context.pending_messages)
             return
 
         logger.debug(f"终端提交用户输入: {text[:80]!r}")
@@ -272,7 +280,7 @@ class ChatTerminalApp(App):
             return True
 
         # Unknown command
-        await self._mount_status(f"未知命令: {cmd_name}，使用 /help 查看可用命令", variant="error")
+        await self.logger.error(f"未知命令: {cmd_name}，使用 /help 查看可用命令")
         return True
 
     async def _submit_text(self, text: str) -> None:
@@ -287,14 +295,20 @@ class ChatTerminalApp(App):
             while self.context.pending_messages:
                 pending = list(self.context.pending_messages)
                 self.context.pending_messages.clear()
-                await self._mount_status(f"发送队列中的 {len(pending)} 条消息...", variant="info")
+                # Update pending messages display (clear if empty)
+                pending_display = self.query_one("#pending-messages", PendingMessagesDisplay)
+                pending_display.update_messages(self.context.pending_messages)
+                await self.logger.info(f"发送队列中的 {len(pending)} 条消息...")
                 await self.context.send(pending)
         except Exception as exc:
             logger.debug(f"终端会话异常: {exc}")
             self._debug(f"debug: exception: {exc}")
-            await self._mount_status(f"会话失败：{exc}", variant="error")
+            await self.logger.error(f"会话失败：{exc}")
         finally:
             self._is_processing = False
+            # Clear pending messages display when done
+            pending_display = self.query_one("#pending-messages", PendingMessagesDisplay)
+            pending_display.update_messages([])
             self._sync_composer_height()
             composer.focus()
 
@@ -461,27 +475,27 @@ class ChatTerminalApp(App):
     async def action_toggle_thinking(self) -> None:
         # Check if provider supports thinking
         if not self.context.provider.thinking_supported:
-            await self._mount_status("当前模型不支持 Thinking 模式", variant="error")
+            await self.logger.error("当前模型不支持 Thinking 模式")
             return
         self.context.thinking_mode = not self.context.thinking_mode
         mode = "开启" if self.context.thinking_mode else "关闭"
-        await self._mount_status(f"Thinking 已{mode}")
+        await self.logger.info(f"Thinking 已{mode}")
 
     async def action_clear_session(self) -> None:
         await self.context.reset()
 
-    def action_interrupt(self) -> None:
+    async def action_interrupt(self) -> None:
         """Interrupt the current LLM output stream."""
         if self._is_processing:
             self.context.interrupt()
-            logger.error("用户打断消息")
-            self._debug("debug: interrupt requested")
+            await self.logger.error("interrupt by user")
+
             self._ctrl_c_count = 0
         else:
             # Not processing, user might be trying to quit
             self._ctrl_c_count += 1
             if self._ctrl_c_count >= 2:
-                self.run_worker(self._mount_status("提示：使用 Ctrl+D 退出程序", variant="status"))
+                self.run_worker(self.logger.info("提示：使用 Ctrl+D 退出程序"))
                 self._ctrl_c_count = 0
 
     async def action_quit(self) -> None:
@@ -566,19 +580,19 @@ class ChatTerminalApp(App):
         # [1] yes - approve once
         if lowered in {"yes", "y", "1", "同意"}:
             self._resolve_pending_confirmation(ToolConfirmationDecision(approved=True))
-            await self._mount_status(f"已同意工具调用: {tool_name}")
+            await self.logger.info(f"已同意工具调用: {tool_name}")
             return
 
         # [2] yes for this session - approve for entire session
         if lowered in {"yes for this session", "session", "s", "2", "本次会话"}:
             self._resolve_pending_confirmation(ToolConfirmationDecision(approved=True, session_approved=True))
-            await self._mount_status("已同意本次会话的所有工具调用")
+            await self.logger.info("已同意本次会话的所有工具调用")
             return
 
         # [3] no - reject without reason
         if lowered in {"no", "n", "3", "拒绝"}:
             self._resolve_pending_confirmation(ToolConfirmationDecision(approved=False))
-            await self._mount_status(f"已拒绝工具调用: {tool_name}")
+            await self.logger.info(f"已拒绝工具调用: {tool_name}")
             return
 
         # Any other text - reject with clarification (reason is the text itself)
@@ -590,12 +604,11 @@ class ChatTerminalApp(App):
                     next_steps="请根据用户反馈调整",
                 )
             )
-            await self._mount_status(f"已拒绝工具调用: {tool_name}，原因: {normalized}")
+            await self.logger.info(f"已拒绝工具调用: {tool_name}，原因: {normalized}")
             return
 
-        await self._mount_status(
+        await self.logger.error(
             "无效选项，请使用 Y/S/N 或直接输入拒绝原因。",
-            variant="error",
         )
 
     def _resolve_pending_confirmation(self, decision: ToolConfirmationDecision) -> None:
@@ -619,6 +632,8 @@ class ChatTerminalApp(App):
                 composer.load_text(self._composer_stashed_text)
                 self._composer_stashed_text = ""
                 self._sync_composer_height()
+            # Focus back to composer
+            composer.focus()
         except Exception:
             pass
 

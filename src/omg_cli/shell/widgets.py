@@ -866,6 +866,47 @@ class MessageHistoryView(VerticalScroll):
 
 
 # =============================================================================
+# Pending Messages Queue Display
+# =============================================================================
+
+
+class PendingMessagesDisplay(Vertical):
+    """Display pending messages in the queue while LLM is thinking."""
+
+    def __init__(self, id: str | None = None) -> None:
+        super().__init__(classes="pending-messages-display", id=id)
+        self._message_widgets: list[SafeStatic] = []
+
+    def compose(self) -> ComposeResult:
+        yield SafeStatic("📋 待发送消息", classes="pending-messages-title")
+        self._content_container = Vertical(classes="pending-messages-content")
+        yield self._content_container
+
+    def update_messages(self, messages: list[str]) -> None:
+        """Update the displayed messages."""
+        # Clear existing content
+        self._content_container.remove_children()
+        self._message_widgets.clear()
+
+        if not messages:
+            self.styles.display = "none"
+            return
+
+        # Show the widget
+        self.styles.display = "block"
+
+        # Add each message
+        for i, msg in enumerate(messages, 1):
+            # Truncate long messages for display
+            display_text = msg[:100] + "…" if len(msg) > 100 else msg
+            # Replace newlines with spaces for compact display
+            display_text = display_text.replace("\n", " ")
+            msg_widget = SafeStatic(f"  {i}. {display_text}", classes="pending-message-item")
+            self._message_widgets.append(msg_widget)
+            self._content_container.mount(msg_widget)
+
+
+# =============================================================================
 # Dialog Components
 # =============================================================================
 
