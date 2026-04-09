@@ -3,12 +3,11 @@ from abc import ABC
 from collections.abc import AsyncIterator, Callable, Sequence
 import copy
 import json
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from src.omg_cli.abstract import ChatAdapter
-from src.omg_cli.config import SessionMetadata, SessionStorage, get_config_manager
+from src.omg_cli.config import get_config_manager
 from src.omg_cli.context.command import CommandProtocol
 from src.omg_cli.context.event_manager import EventManager
 from src.omg_cli.context.mcp_manager import MCPManagerProtocol
@@ -116,9 +115,6 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
         MCPManagerProtocol.__init__(self)
         TodoProtocol.__init__(self)
 
-        # Session storage
-        self._session_storage = SessionStorage()
-
         # Core attributes
         self.session_id = uuid4().hex
         self.provider = provider
@@ -158,14 +154,6 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
         self._setup_tools(tools or [])
         for tool in TOOL_LIST:
             self.register_tool(tool)
-
-        # Initialize session metadata if not loading existing
-        self._session_metadata = SessionMetadata(
-            session_id=self.session_id,
-            workspace=Path.cwd(),
-            model_name=getattr(provider, "model_name", None),
-        )
-        self._session_storage.save_metadata(self._session_metadata)
 
     @property
     def tools(self) -> list[Tool[Any]]:
@@ -211,12 +199,6 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
 
         # Generate new session ID for new conversation
         self.session_id = uuid4().hex
-        self._session_metadata = SessionMetadata(
-            session_id=self.session_id,
-            workspace=Path.cwd(),
-            model_name=self.provider.model_name,
-        )
-        self._session_storage.save_metadata(self._session_metadata)
 
         await self._initial_context_size()
 
@@ -241,8 +223,6 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
 
         Also persists the message to storage.
         """
-        # Persist message to storage
-        self._session_storage.append_message(self.session_id, message)
 
         self.messages.append(message)
         if display:
@@ -279,15 +259,12 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
                 tools=[],
             )
             self.messages = []
-            self.messages.append(summary_message)
+            await self.append(summary_message)
         except Exception as exc:
             logger.error(f"LLM summarization failed: {exc}")
             raise ToolError(f"Context compaction failed: {exc}")
 
         old_count = len(self.messages)
-
-        # Persist compacted messages to disk
-        self._session_storage.save_messages(self.session_id, self.messages)
 
         result_msg = f"Context compacted: {old_count} -> {len(self.messages)} messages. "
         logger.success(result_msg)
