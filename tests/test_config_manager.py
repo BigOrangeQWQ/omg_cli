@@ -5,9 +5,9 @@ import tempfile
 
 import pytest
 
-from src.omg_cli.config.manager import ConfigManager
-from src.omg_cli.config.models import UserConfig
-from src.omg_cli.mcp import MCPServerConfig
+from omg_cli.config.manager import ConfigManager
+from omg_cli.config.models import UserConfig
+from omg_cli.mcp import MCPServerConfig
 
 
 @pytest.fixture

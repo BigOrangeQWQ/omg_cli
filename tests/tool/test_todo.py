@@ -3,9 +3,9 @@
 from inline_snapshot import snapshot
 import pytest
 
-from src.omg_cli.tool import ToolManager
-from src.omg_cli.tool.todo import TodoList, TodoProtocol
-from src.omg_cli.types.tool import ToolError
+from omg_cli.tool import ToolManager
+from omg_cli.tool.todo import TodoList, TodoProtocol
+from omg_cli.types.tool import ToolError
 
 
 class TestTodoList:

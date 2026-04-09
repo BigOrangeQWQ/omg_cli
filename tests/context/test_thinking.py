@@ -3,9 +3,9 @@
 from pydantic import BaseModel
 import pytest
 
-from src.omg_cli.abstract import ChatAdapter
-from src.omg_cli.context import ChatContext
-from src.omg_cli.types.message import (
+from omg_cli.abstract import ChatAdapter
+from omg_cli.context import ChatContext
+from omg_cli.types.message import (
     Message,
     MessageStreamCompleteEvent,
     MessageStreamDeltaEvent,
@@ -16,7 +16,7 @@ from src.omg_cli.types.message import (
     ToolSegment,
     UsageSegment,
 )
-from src.omg_cli.types.tool import Tool
+from omg_cli.types.tool import Tool
 
 
 class DummyParams(BaseModel):
@@ -49,11 +49,7 @@ class MockProvider(ChatAdapter):
     async def stream(self, system_prompt, messages, tools=None, max_tokens=None, thinking=False, **kwargs):
         self.stream_call_count += 1
         # Support per-round event lists (list of lists) or a single flat list
-        if (
-            self.events_list
-            and isinstance(self.events_list, list)
-            and isinstance(self.events_list[0], list)
-        ):
+        if self.events_list and isinstance(self.events_list, list) and isinstance(self.events_list[0], list):
             idx = self.stream_call_count - 1
             events = self.events_list[idx] if idx < len(self.events_list) else []
         else:
@@ -148,9 +144,7 @@ async def test_thinking_with_usage_segment() -> None:
     provider = MockProvider(
         events_list=[
             MessageStreamCompleteEvent(segment=TextSegment(text="Yes."), index=0),
-            MessageStreamCompleteEvent(
-                segment=UsageSegment(input_tokens=10, output_tokens=2), index=0
-            ),
+            MessageStreamCompleteEvent(segment=UsageSegment(input_tokens=10, output_tokens=2), index=0),
             MessageStreamCompleteEvent(segment=StopSegment(reason="stop"), index=0),
         ]
     )
@@ -173,9 +167,7 @@ async def test_thinking_think_mode() -> None:
     provider = MockProvider(
         events_list=[
             MessageStreamDeltaEvent(segment=ThinkDetailSegment(thought_process="Hmm...", index=0), index=0),
-            MessageStreamCompleteEvent(
-                segment=ThinkSegment(thought_process="Hmm...", signature="sig-1"), index=0
-            ),
+            MessageStreamCompleteEvent(segment=ThinkSegment(thought_process="Hmm...", signature="sig-1"), index=0),
             MessageStreamCompleteEvent(segment=TextSegment(text="Answer."), index=0),
             MessageStreamCompleteEvent(segment=StopSegment(reason="stop"), index=0),
         ]
@@ -201,9 +193,7 @@ async def test_thinking_sub_rounds_limit() -> None:
         events_list=[
             [
                 MessageStreamCompleteEvent(
-                    segment=ToolSegment(
-                        tool_call_id=f"call-{i}", tool_name="echo_tool", arguments={"msg": "x"}
-                    ),
+                    segment=ToolSegment(tool_call_id=f"call-{i}", tool_name="echo_tool", arguments={"msg": "x"}),
                     index=i,
                 )
             ]

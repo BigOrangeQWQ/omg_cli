@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from src.omg_cli.types.skill import parse_skill_manifest
+from omg_cli.types.skill import parse_skill_manifest
 
 
 class TestParseSkillManifest:

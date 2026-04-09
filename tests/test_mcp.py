@@ -5,12 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import mcp.types
 import pytest
 
-from src.omg_cli.mcp import (
+from omg_cli.mcp import (
     MCPClientWrapper,
     MCPServerConfig,
     _convert_tool_result,
 )
-from src.omg_cli.types.tool import ToolError
+from omg_cli.types.tool import ToolError
 
 
 class TestMCPServerConfig:
@@ -185,7 +185,7 @@ class TestMCPClientWrapper:
     def test_init(self) -> None:
         """Test client wrapper initialization."""
         config = MCPServerConfig(name="test-server", type="stdio", command="python")
-        with patch("src.omg_cli.mcp.fastmcp.Client") as mock_client:
+        with patch("omg_cli.mcp.fastmcp.Client") as mock_client:
             wrapper = MCPClientWrapper(config)
             assert wrapper.name == "test-server"
             assert wrapper.tools == []
@@ -194,14 +194,14 @@ class TestMCPClientWrapper:
     def test_name_property(self) -> None:
         """Test name property returns config name."""
         config = MCPServerConfig(name="my-server", type="stdio", command="python")
-        with patch("src.omg_cli.mcp.fastmcp.Client"):
+        with patch("omg_cli.mcp.fastmcp.Client"):
             wrapper = MCPClientWrapper(config)
             assert wrapper.name == "my-server"
 
     def test_is_connected_property(self) -> None:
         """Test is_connected property delegates to client."""
         config = MCPServerConfig(name="test", type="stdio", command="python")
-        with patch("src.omg_cli.mcp.fastmcp.Client") as mock_client_class:
+        with patch("omg_cli.mcp.fastmcp.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client.is_connected.return_value = True
             mock_client_class.return_value = mock_client
@@ -221,7 +221,7 @@ class TestMCPClientWrapper:
             inputSchema={"type": "object", "properties": {}},
         )
 
-        with patch("src.omg_cli.mcp.fastmcp.Client"):
+        with patch("omg_cli.mcp.fastmcp.Client"):
             wrapper = MCPClientWrapper(config)
             # Directly set tools to simulate connect
             wrapper._tools = [mock_tool]
@@ -234,7 +234,7 @@ class TestMCPClientWrapper:
         """Test disconnect clears cached tools."""
         config = MCPServerConfig(name="test", type="stdio", command="python")
 
-        with patch("src.omg_cli.mcp.fastmcp.Client") as mock_client_class:
+        with patch("omg_cli.mcp.fastmcp.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client.close = AsyncMock()
             mock_client_class.return_value = mock_client
@@ -256,7 +256,7 @@ class TestMCPClientWrapper:
         mock_result.content = [mcp.types.TextContent(type="text", text="Tool result")]
         mock_result.is_error = False
 
-        with patch("src.omg_cli.mcp.fastmcp.Client") as mock_client_class:
+        with patch("omg_cli.mcp.fastmcp.Client") as mock_client_class:
             # Setup async context manager mock
             mock_client_instance = AsyncMock()
             mock_client_instance.call_tool.return_value = mock_result
@@ -282,7 +282,7 @@ class TestMCPClientWrapper:
             },
         )
 
-        with patch("src.omg_cli.mcp.fastmcp.Client"):
+        with patch("omg_cli.mcp.fastmcp.Client"):
             wrapper = MCPClientWrapper(config)
             wrapper._tools = [mock_tool]
 
@@ -303,7 +303,7 @@ class TestMCPClientWrapper:
         mock_result.content = [mcp.types.TextContent(type="text", text="Result")]
         mock_result.is_error = False
 
-        with patch("src.omg_cli.mcp.fastmcp.Client") as mock_client_class:
+        with patch("omg_cli.mcp.fastmcp.Client") as mock_client_class:
             # Setup async context manager mock
             mock_client_instance = AsyncMock()
             mock_client_instance.call_tool.return_value = mock_result
@@ -326,7 +326,7 @@ class TestMCPClientWrapperEdgeCases:
         """Test connecting to server with no tools."""
         config = MCPServerConfig(name="empty", type="stdio", command="python")
 
-        with patch("src.omg_cli.mcp.fastmcp.Client"):
+        with patch("omg_cli.mcp.fastmcp.Client"):
             wrapper = MCPClientWrapper(config)
             # Directly set empty tools to simulate connect
             wrapper._tools = []
@@ -337,7 +337,7 @@ class TestMCPClientWrapperEdgeCases:
         """Test that tools property returns a copy."""
         config = MCPServerConfig(name="test", type="stdio", command="python")
 
-        with patch("src.omg_cli.mcp.fastmcp.Client"):
+        with patch("omg_cli.mcp.fastmcp.Client"):
             wrapper = MCPClientWrapper(config)
             wrapper._tools = [MagicMock()]
 
