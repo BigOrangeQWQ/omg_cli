@@ -12,6 +12,7 @@ from src.omg_cli.log import logger
 from src.omg_cli.types.event import (
     AppExitEvent,
     BaseEvent,
+    SessionCompactedEvent,
     SessionErrorEvent,
     SessionLoadedEvent,
     SessionMessageEvent,
@@ -25,6 +26,7 @@ from src.omg_cli.types.message import (
     Message,
     MessageStreamDeltaEvent,
     TextDetailSegment,
+    TextSegment,
     ThinkDetailSegment,
     ToolCall,
     ToolCallDetailSegment,
@@ -56,6 +58,7 @@ class ChatTerminalApp(App):
 
     BINDINGS: ClassVar[list[BindingType]] = [
         ("ctrl+t", "toggle_thinking", "切换 Thinking"),
+        ("ctrl+x", "toggle_planning", "切换 Planning"),
         ("ctrl+l", "clear_session", "清空会话"),
         ("ctrl+c", "interrupt", "打断输出"),
         ("ctrl+d", "quit", "退出"),
@@ -93,6 +96,12 @@ class ChatTerminalApp(App):
         self.context.register_event_handler(BaseEvent, self._handle_context_event)
         self.context.register_event_handler(SessionStreamDeltaEvent, self._handle_stream_event)
         self.context.register_event_handler(SessionStreamCompletedEvent, self._handle_stream_event)
+
+        session_id = self.context.session_id
+        session_row = MessageRow(
+            Message(role="system", content=[TextSegment(text=f"Session ID: {session_id}")])
+        )
+        messages_view.mount(session_row)
 
         for message in self.context.messages:
             await self._mount_message(message)
@@ -146,6 +155,7 @@ class ChatTerminalApp(App):
         await self.context.initialize_mcp_servers()
 
     async def on_unmount(self) -> None:
+        print(f"\n[Session UUID: {self.context.session_id}]")
         self.context.set_tool_confirmation_handler(None)
         await self.context.disconnect_all_mcp_servers()
 
@@ -265,6 +275,15 @@ class ChatTerminalApp(App):
                 logger.debug("Session loaded")
                 await self._update_context_display()
                 self.call_after_refresh(self._focus_composer)
+            case SessionCompactedEvent():
+                messages_view = self.query_one("#messages", VerticalScroll)
+                await messages_view.remove_children()
+                self._stream_previews.clear()
+                for message in self.context.display_messages:
+                    await self._mount_message(message)
+                logger.debug("Session compacted")
+                await self._update_context_display()
+                self.call_after_refresh(self._focus_composer)
             case _:
                 pass
 
@@ -361,6 +380,11 @@ class ChatTerminalApp(App):
         mode = "enabled" if self.context.thinking_mode else "disabled"
         await self.logger.info(f"Thinking {mode}")
 
+    async def action_toggle_planning(self) -> None:
+        self.context.planning_mode = not self.context.planning_mode
+        mode = "enabled" if self.context.planning_mode else "disabled"
+        await self.logger.info(f"Planning {mode}")
+
     async def action_clear_session(self) -> None:
         await self.context.reset()
 
@@ -377,7 +401,6 @@ class ChatTerminalApp(App):
             self._ctrl_c_count = 0
 
     async def action_quit(self) -> None:
-        print(f"\n[Session UUID: {self.context.session_id}]")
         self.exit()
 
     def on_mouse_scroll_up(self, event) -> None:
@@ -430,9 +453,9 @@ class ChatTerminalApp(App):
             composer.focus()
             self._sync_composer_height()
 
-        if decision.approved:
-            await self.logger.success(f"Tool call approved: {tool.name}")
-        elif decision.reason:
+        # if decision.approved:
+        # await self.logger.success(f"Tool call approved: {tool.name}")
+        if decision.reason:
             await self.logger.info(f"Tool call rejected: {tool.name}, reason: {decision.reason}")
 
         return decision
