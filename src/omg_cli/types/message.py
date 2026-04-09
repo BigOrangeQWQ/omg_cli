@@ -26,6 +26,9 @@ class TextSegment(BaseModel):
     def __str__(self) -> str:
         return self.text
 
+    def to_user_message(self) -> "Message":
+        return Message(role="user", content=[self])
+
 
 class ImageSegment(BaseModel):
     type: Literal["image"] = "image"
@@ -168,6 +171,9 @@ class Message(BaseModel):
     tool_calls: list[ToolCall] = Field(default_factory=list)
 
     time: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
     # Allow additional arbitrary fields
     model_config = ConfigDict(extra="allow")
