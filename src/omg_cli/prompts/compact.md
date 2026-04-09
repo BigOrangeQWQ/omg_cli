@@ -2,6 +2,9 @@ You are currently tasked with compressing your own code context, removing **redu
 
 # Regarding Compression of User Input
 
+**You must preserve the last {RECENT_MESSAGES_TO_KEEP} sentences of user input.** Do not compress or remove them.
+
+
 Preserve the execution guidelines, code standards, etc., that the user has explicitly mentioned — these are **rules you must follow** that transcend any specific task.
 
 # Necessary Information to Retain
@@ -16,6 +19,11 @@ Preserve the execution guidelines, code standards, etc., that the user has expli
 <current_focus>
 [What we're working on now]
 </current_focus>
+
+<user_input>
+[The last {RECENT_MESSAGES_TO_KEEP} sentences of user input, preserved verbatim]
+</user_input>
+
 
 <file>
 [filename]
@@ -35,3 +43,4 @@ Preserve the execution guidelines, code standards, etc., that the user has expli
 - [Any crucial information not covered above]
 - ...more...
 </important_context>
+
