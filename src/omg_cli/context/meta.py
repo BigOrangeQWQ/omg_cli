@@ -1,5 +1,5 @@
-"""MetaContext for managing chat sessions with LLM providers."""
-
+import abc
+from abc import ABC
 from collections.abc import AsyncIterator, Callable, Sequence
 import copy
 import json
@@ -87,7 +87,7 @@ class Notifier:
         await self._emit(message, StatusLevel.ERROR)
 
 
-class MetaContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, TodoProtocol):
+class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, TodoProtocol):
     """
     Base context for managing a chat session with an LLM provider.
 
@@ -264,38 +264,36 @@ class MetaContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, Todo
             context_parts.append(f"**{role_display}**: {content_text}\n")
         context_text = "\n".join(context_parts)
 
-        self.token_usage.set_context_tokens(0)
+        self.token_usage.input_tokens = 0
+        self.token_usage.output_tokens = 0
 
         try:
-            assistant_messages, _ = await self.thinking(
+            summary_message = await self.provider.chat(
                 system_prompt=self.system_prompt,
                 messages=[
+                    *self.messages,
                     TextSegment(
                         text=COMPACT_MD.format(CONTEXT=context_text, RECENT_MESSAGES_TO_KEEP=keep_recent)
-                    ).to_user_message()
+                    ).to_user_message(),
                 ],
                 tools=[],
             )
-            # Extract text from all assistant messages produced during thinking
-            summary_text = "".join(msg.text for msg in assistant_messages if msg.role == "assistant")
+            self.messages = []
+            self.messages.append(summary_message)
         except Exception as exc:
             logger.error(f"LLM summarization failed: {exc}")
             raise ToolError(f"Context compaction failed: {exc}")
 
         old_count = len(self.messages)
-        self.messages = []
-        if summary_text:
-            self.messages.append(Message(role="assistant", content=[TextSegment(text=summary_text)]))
 
         # Persist compacted messages to disk
         self._session_storage.save_messages(self.session_id, self.messages)
 
         result_msg = f"Context compacted: {old_count} -> {len(self.messages)} messages. "
-        await self.logger.success(result_msg)
         logger.success(result_msg)
 
         await self._emit(SessionCompactedEvent())
-        return summary_text
+        return summary_message.text
 
     async def thinking(
         self,
@@ -517,6 +515,7 @@ class MetaContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, Todo
         for text in texts:
             self._message_queue.append(Message(role="user", content=[TextSegment(text=text)]))
 
+    @abc.abstractmethod
     async def _run_single_tool_call(self, tool_call: ToolCall) -> Message:
         raise NotImplementedError
 
