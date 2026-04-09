@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -35,18 +36,18 @@ class ChatContext(MetaContext):
             messages=messages,
             skills=skills,
         )
-        self.session_id = uuid4().hex
         self.thinking_mode = False
 
         self._pending_texts: list[str] = []
 
-    async def append(self, message: Message) -> None:
+    async def append(self, message: Message, display: bool = True) -> None:
         try:
             self._session_storage.append_message(self.session_id, message)
         except Exception:
             pass
         self.messages.append(message)
-        self.display_messages.append(message)
+        if display:
+            self.display_messages.append(message)
         await self._emit(SessionMessageEvent(message=message))
 
     @property
@@ -78,8 +79,13 @@ class ChatContext(MetaContext):
         self._message_queue.clear()
         self._pending_texts.clear()
 
-        self.session_id = str(uuid4())
-        self._session_metadata = None
+        self.session_id = uuid4().hex
+        self._session_metadata = SessionMetadata(
+            session_id=self.session_id,
+            workspace=Path.cwd(),
+            model_name=getattr(self.provider, "model_name", None),
+        )
+        self._session_storage.save_metadata(self._session_metadata)
 
         await self._update_max_context_size()
         await self._emit(SessionResetEvent())
@@ -96,15 +102,15 @@ class ChatContext(MetaContext):
         system_prompt: str | None = None,
         **kwargs: Any,
     ) -> None:
-        texts = [user_input] if isinstance(user_input, str) else user_input
-        if not texts:
+        user_inputs = [user_input] if isinstance(user_input, str) else user_input
+        if not user_inputs:
             return
 
         if not self.token_usage.initial_context_size:
             await self._update_max_context_size()
 
-        for text in texts:
-            await self.append(Message(role="user", content=[TextSegment(text=text)]))
+        for text in user_inputs:
+            await self.append(TextSegment(text=text).to_user_message(), display=True)
 
         self._interrupt_requested = False
 
@@ -151,7 +157,6 @@ class ChatContext(MetaContext):
                     rejection["reason"] = decision.reason
                 if decision.next_steps:
                     rejection["next_steps"] = decision.next_steps
-                await self.logger.warn(f"Tool call rejected: {tool_name}")
                 return tool_call_to_message(tool_call, rejection)
 
         try:
