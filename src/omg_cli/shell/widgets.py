@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
 from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
-from textual.binding import BindingType
+from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message as TextualMessage
 from textual.selection import Selection
@@ -450,6 +450,11 @@ class ComposerTextArea(TextArea):
     """Multi-line input with autocomplete integration."""
 
     can_focus = True
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("ctrl+x", "toggle_planning", "切换 Planning"),
+        Binding("ctrl+c", "interrupt", "打断输出"),
+    ]
 
     @dataclass
     class Submitted(TextualMessage):
