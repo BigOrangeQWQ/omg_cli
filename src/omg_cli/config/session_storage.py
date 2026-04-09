@@ -27,7 +27,7 @@ class SessionStorage:
             └── messages.jsonl # Messages in JSON Lines format
     """
 
-    def __init__(self, config_dir: Path | None) -> None:
+    def __init__(self, config_dir: Path | None = None) -> None:
         if config_dir is None:
             from src.omg_cli.config.manager import get_config_manager
 
@@ -74,6 +74,7 @@ class SessionStorage:
     def append_message(self, session_id: str, message: Message | list[Message]) -> None:
         """Append a single message to the session's messages file."""
         messages_path = self._get_messages_path(session_id)
+        messages_path.parent.mkdir(parents=True, exist_ok=True)
 
         if isinstance(message, Message):
             message = [message]
