@@ -1,16 +1,15 @@
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 from src.omg_cli.config import SessionMetadata
+from src.omg_cli.config.session_storage import SessionStorage
 from src.omg_cli.context.command import CommandProtocol
 from src.omg_cli.context.meta import MetaContext, Notifier, tool_call_to_message
 from src.omg_cli.context.tool_manager import ToolConfirmationDecision, ToolManagerProtocol
 from src.omg_cli.log import logger
-from src.omg_cli.types.event import SessionErrorEvent, SessionMessageEvent, SessionResetEvent
+from src.omg_cli.types.event import SessionErrorEvent, SessionMessageEvent
 from src.omg_cli.types.message import Message, TextSegment, ToolCall
 from src.omg_cli.types.tool import ToolError
-from src.omg_cli.types.usage import TokenUsage
 
 SUB_ROUNDS_LIMIT = 10
 RESERVED_TOKENS = 50_000
@@ -36,9 +35,14 @@ class ChatContext(MetaContext):
             messages=messages,
             skills=skills,
         )
-        self.thinking_mode = False
+        self._pending_messages: list[str] = []
 
-        self._pending_texts: list[str] = []
+        self._session_metadata = SessionMetadata(
+            session_id=self.session_id,
+            workspace=Path.cwd(),
+            model_name=self.provider.model_name,
+        )
+        self._session_storage = SessionStorage()
 
     async def append(self, message: Message, display: bool = True) -> None:
         try:
@@ -52,7 +56,7 @@ class ChatContext(MetaContext):
 
     @property
     def pending_messages(self) -> list[str]:
-        return self._pending_texts
+        return self._pending_messages
 
     @property
     def command_registry(self) -> CommandProtocol:
@@ -72,23 +76,14 @@ class ChatContext(MetaContext):
             await self._update_max_context_size()
 
     async def reset(self) -> None:
-        self.messages.clear()
-        self.display_messages.clear()
-        self._session_approve_all = False
-        self.token_usage = TokenUsage()
-        self._message_queue.clear()
-        self._pending_texts.clear()
-
-        self.session_id = uuid4().hex
-        self._session_metadata = SessionMetadata(
-            session_id=self.session_id,
-            workspace=Path.cwd(),
-            model_name=getattr(self.provider, "model_name", None),
-        )
+        self._session_storage.save_messages(self.session_id, [])
         self._session_storage.save_metadata(self._session_metadata)
 
-        await self._update_max_context_size()
-        await self._emit(SessionResetEvent())
+        await super().reset()
+
+    async def compact_context(self, keep_recent: int = RECENT_MESSAGES_TO_KEEP) -> str | None:
+        await super().compact_context(keep_recent=keep_recent)
+        self._session_storage.save_messages(self.session_id, self.messages)
 
     def interrupt(self) -> None:
         self._interrupt_requested = True
