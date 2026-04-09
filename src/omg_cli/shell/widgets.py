@@ -1,10 +1,6 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
 
-if TYPE_CHECKING:
-    from .app import ChatTerminalApp
-
-
 from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
@@ -16,6 +12,7 @@ from textual.visual import VisualType
 from textual.widget import Widget
 from textual.widgets import Footer, ListItem, ListView, Markdown, Static, TextArea
 
+from src.omg_cli.log import logger
 from src.omg_cli.types.message import (
     Message,
     TextSegment,
@@ -28,6 +25,9 @@ from .file_completion import FileCompletionMixin
 from .utils import _build_message_title, _build_thinking_preview, _format_arguments
 
 type StreamPreviewType = Literal["tool", "thinking", " text"]
+
+if TYPE_CHECKING:
+    from .app import ChatTerminalApp
 
 
 class PreviewRow(Protocol):
@@ -1043,10 +1043,11 @@ class ApprovalDialog(Vertical):
 
     def _confirm(self) -> None:
         choice = self.OPTIONS[self.selected_index][1]
+        logger.debug(f"Tool approval decision: {choice} for tool {self.tool_name}")
         try:
             app = self._get_app()
             composer = app.query_one("#composer", ComposerTextArea)
             app.post_message(ComposerTextArea.Submitted(composer, choice))
+            logger.debug("Posted tool approval decision to composer")
         except Exception:
-            pass
-        self.remove()
+            logger.opt(exception=True).error("Failed to post tool approval decision")
