@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterator, Callable, Sequence
 import copy
 import json
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -18,6 +19,7 @@ from src.omg_cli.tool.todo import TodoProtocol
 from src.omg_cli.tool.tools import TOOL_LIST
 from src.omg_cli.types.event import (
     BaseEvent,
+    SessionCompactedEvent,
     SessionMessageEvent,
     SessionResetEvent,
     SessionStatusEvent,
@@ -158,7 +160,12 @@ class MetaContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, Todo
             self.register_tool(tool)
 
         # Initialize session metadata if not loading existing
-        self._session_metadata: SessionMetadata | None = None
+        self._session_metadata = SessionMetadata(
+            session_id=self.session_id,
+            workspace=Path.cwd(),
+            model_name=getattr(provider, "model_name", None),
+        )
+        self._session_storage.save_metadata(self._session_metadata)
 
     @property
     def tools(self) -> list[Tool[Any]]:
@@ -204,7 +211,12 @@ class MetaContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, Todo
 
         # Generate new session ID for new conversation
         self.session_id = uuid4().hex
-        self._session_metadata = None
+        self._session_metadata = SessionMetadata(
+            session_id=self.session_id,
+            workspace=Path.cwd(),
+            model_name=self.provider.model_name,
+        )
+        self._session_storage.save_metadata(self._session_metadata)
 
         await self._initial_context_size()
 
@@ -223,7 +235,7 @@ class MetaContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, Todo
         """Register an event handler for a specific event type."""
         self._event_manager.register(event_type, handler)
 
-    async def append(self, message: Message) -> None:
+    async def append(self, message: Message, display: bool = True) -> None:
         """
         Append a message to the context and display it.
 
@@ -233,7 +245,8 @@ class MetaContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, Todo
         self._session_storage.append_message(self.session_id, message)
 
         self.messages.append(message)
-        self.display_messages.append(message)
+        if display:
+            self.display_messages.append(message)
 
         await self._emit(SessionMessageEvent(message=message))
 
@@ -243,49 +256,45 @@ class MetaContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, Todo
 
         logger.info(f"Compacting context: {len(self.messages)} messages, keeping {keep_recent} recent")
 
-        # Split messages: older to summarize, recent to keep
-        messages_to_summarize = self.messages[:-keep_recent]
-        recent_messages = self.messages[-keep_recent:]
-
         # Build context text for summarization
         context_parts = []
-        for msg in messages_to_summarize:
+        for msg in self.messages:
             role_display = f"assistant ({msg.name})" if msg.name else msg.role
             content_text = " ".join(str(segment) for segment in msg.content)
             context_parts.append(f"**{role_display}**: {content_text}\n")
         context_text = "\n".join(context_parts)
 
+        self.token_usage.set_context_tokens(0)
+
         try:
-            summary_message = await self.provider.chat(
-                system_prompt="",
-                messages=COMPACT_MD.format(
-                    CONTEXT=context_text,
-                ),
+            assistant_messages, _ = await self.thinking(
+                system_prompt=self.system_prompt,
+                messages=[
+                    TextSegment(
+                        text=COMPACT_MD.format(CONTEXT=context_text, RECENT_MESSAGES_TO_KEEP=keep_recent)
+                    ).to_user_message()
+                ],
                 tools=[],
             )
-            # Extract text from message content
-            summary_text = summary_message.text
+            # Extract text from all assistant messages produced during thinking
+            summary_text = "".join(msg.text for msg in assistant_messages if msg.role == "assistant")
         except Exception as exc:
             logger.error(f"LLM summarization failed: {exc}")
             raise ToolError(f"Context compaction failed: {exc}")
 
-        # New messages: summary + recent messages
-        new_messages: list[Message] = [summary_message, *recent_messages]
-
         old_count = len(self.messages)
-        self.messages = new_messages
-        self.display_messages = list(new_messages)
+        self.messages = []
+        if summary_text:
+            self.messages.append(Message(role="assistant", content=[TextSegment(text=summary_text)]))
 
         # Persist compacted messages to disk
-        self._session_storage.save_messages(self.session_id, new_messages)
+        self._session_storage.save_messages(self.session_id, self.messages)
 
-        result_msg = (
-            f"Context compacted: {old_count} -> {len(self.messages)} messages. "
-            f"Summarized {len(messages_to_summarize)}, kept {len(recent_messages)} recent."
-        )
+        result_msg = f"Context compacted: {old_count} -> {len(self.messages)} messages. "
         await self.logger.success(result_msg)
         logger.success(result_msg)
 
+        await self._emit(SessionCompactedEvent())
         return summary_text
 
     async def thinking(
@@ -295,6 +304,7 @@ class MetaContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, Todo
         tools: list[Tool[Any]] | None = None,
         max_tokens: int | None = None,
         sub_rounds_limit: int = SUB_ROUNDS_LIMIT,
+        display: bool = True,
     ) -> tuple[list[Message], bool]:
         """
         loop is core logic for thinking, it will keep sending messages to provider until:
@@ -422,7 +432,7 @@ class MetaContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, Todo
                 # Sub round message
                 current_conversation_round.append(assistant_msg)
                 # History message for display (without tool calls to avoid confusion)
-                await self.append(assistant_msg)
+                await self.append(assistant_msg, display)
 
                 for tool_call in round_tool_calls:
                     tool_result_message = await self._run_single_tool_call(tool_call)
@@ -431,7 +441,7 @@ class MetaContext(CommandProtocol, ToolManagerProtocol, MCPManagerProtocol, Todo
 
                     response_messages.append(tool_result_message)
 
-                    await self.append(tool_result_message)
+                    await self.append(tool_result_message, display)
 
                     tool_calls.append(tool_call)
             elif round_segments:
