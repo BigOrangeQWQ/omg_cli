@@ -1,6 +1,7 @@
 """CSS styles for the shell TUI."""
 
 CSS = """
+
 Screen {
     layout: vertical;
 }
@@ -173,7 +174,7 @@ Markdown.message__text {
 }
 
 .status--success {
-    color: $success;
+    color: #90EE90;
 }
 
 .stream-preview {
