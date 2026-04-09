@@ -1,3 +1,4 @@
+from asyncio.futures import Future
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
 
@@ -12,6 +13,7 @@ from textual.visual import VisualType
 from textual.widget import Widget
 from textual.widgets import Footer, ListItem, ListView, Markdown, Static, TextArea
 
+from src.omg_cli.context.tool_manager import ToolConfirmationDecision
 from src.omg_cli.log import logger
 from src.omg_cli.types.message import (
     Message,
@@ -22,7 +24,7 @@ from src.omg_cli.types.message import (
 )
 
 from .file_completion import FileCompletionMixin
-from .utils import _build_message_title, _build_thinking_preview, _format_arguments
+from .utils import _build_message_title, _build_thinking_preview, _format_arguments, _format_message_for_copy
 
 type StreamPreviewType = Literal["tool", "thinking", " text"]
 
@@ -99,7 +101,9 @@ class CollapsibleWidget(SafeStatic):
     def on_mount(self) -> None:
         self._refresh()
 
-    async def on_click(self) -> None:
+    async def on_click(self, event) -> None:
+        if getattr(event, "chain", 1) >= 2:
+            return
         await self.action_toggle()
 
     async def action_toggle(self, attribute_name: str | None = None) -> None:
@@ -742,10 +746,24 @@ class MessageRow(Horizontal):
         self.message = message
 
     def compose(self):
-        # 不渲染 tool 角色的消息
         if self.message.role == "tool":
             return
         yield MessageWidget(self.message)
+
+    def on_click(self, event) -> None:
+        if getattr(event, "chain", 1) < 2:
+            return
+        try:
+            import pyperclip
+
+            text = _format_message_for_copy(self.message)
+            if text:
+                pyperclip.copy(text)
+                self.app.notify("已复制到剪贴板", severity="information", timeout=2)
+            else:
+                self.app.notify("没有可复制的内容", severity="warning", timeout=2)
+        except Exception as exc:
+            self.app.notify(f"复制失败: {exc}", severity="error", timeout=3)
 
 
 class ThinkingWidget(CollapsibleWidget):
@@ -956,12 +974,16 @@ class PendingMessagesDisplay(Vertical):
 
 
 class ApprovalDialog(Vertical):
-    """Tool approval dialog."""
+    """Tool approval dialog that resolves with a ToolConfirmationDecision."""
 
-    OPTIONS: ClassVar[list[tuple[str, str]]] = [
-        ("Approve", "yes"),
-        ("Approve all for this session", "yes for this session"),
-        ("Skip", "no"),
+    OPTIONS: ClassVar[list[tuple[str, str, ToolConfirmationDecision]]] = [
+        ("Approve", "yes", ToolConfirmationDecision(approved=True)),
+        (
+            "Approve all for this session",
+            "yes for this session",
+            ToolConfirmationDecision(approved=True, session_approved=True),
+        ),
+        ("Skip", "no", ToolConfirmationDecision(approved=False)),
     ]
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -980,13 +1002,14 @@ class ApprovalDialog(Vertical):
         self.selected_index = 0
         self.mouse_enabled = True
         self.can_focus = True
+        self._future: Future[ToolConfirmationDecision] = Future()
 
     def compose(self):
         yield SafeStatic(f"⚠ Tool approval requested: {self.tool_name}", classes="approval-title")
         yield SafeStatic(f"Arguments: {self.arguments}", classes="approval-args")
         yield SafeStatic("")
         self.option_widgets: list[SafeStatic] = []
-        for i, (label, _) in enumerate(self.OPTIONS):
+        for i, (label, _, _) in enumerate(self.OPTIONS):
             option = SafeStatic(self._format_option(i, label), classes="approval-option")
             self.option_widgets.append(option)
             yield option
@@ -999,19 +1022,17 @@ class ApprovalDialog(Vertical):
         for i, widget in enumerate(self.option_widgets):
             widget.update(self._format_option(i, self.OPTIONS[i][0]))
 
-    def _get_app(self) -> "ChatTerminalApp":
-        from .app import ChatTerminalApp
+    async def wait(self) -> ToolConfirmationDecision:
+        """Wait for the user to make a decision."""
+        return await self._future
 
-        return cast(ChatTerminalApp, self.app)
+    def _resolve(self, decision: ToolConfirmationDecision) -> None:
+        if not self._future.done():
+            self._future.set_result(decision)
+        self.remove()
 
     def action_select_next(self) -> None:
-        if self.selected_index == len(self.OPTIONS) - 1:
-            try:
-                composer = self._get_app().query_one("#composer", ComposerTextArea)
-                composer.focus()
-            except Exception:
-                pass
-        else:
+        if self.selected_index < len(self.OPTIONS) - 1:
             self.selected_index += 1
             self._update_display()
 
@@ -1042,12 +1063,6 @@ class ApprovalDialog(Vertical):
                 return
 
     def _confirm(self) -> None:
-        choice = self.OPTIONS[self.selected_index][1]
-        logger.debug(f"Tool approval decision: {choice} for tool {self.tool_name}")
-        try:
-            app = self._get_app()
-            composer = app.query_one("#composer", ComposerTextArea)
-            app.post_message(ComposerTextArea.Submitted(composer, choice))
-            logger.debug("Posted tool approval decision to composer")
-        except Exception:
-            logger.opt(exception=True).error("Failed to post tool approval decision")
+        decision = self.OPTIONS[self.selected_index][2]
+        logger.debug(f"Tool approval decision for {self.tool_name}: {self.OPTIONS[self.selected_index][1]}")
+        self._resolve(decision)

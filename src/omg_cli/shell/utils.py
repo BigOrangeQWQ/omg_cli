@@ -3,6 +3,8 @@
 import json
 from typing import Any
 
+from src.omg_cli.types.message import Message
+
 
 def _build_message_title(message: Any) -> str:
     """Build the title for a message widget."""
@@ -75,3 +77,24 @@ def _format_arguments(arguments: dict[str, Any] | str, *, max_lines: int = 2) ->
         lines = lines[-max_lines:]
 
     return "\n".join(lines)
+
+
+def _format_message_for_copy(message: Message) -> str:
+    """Format a message into readable plain text for copying."""
+    parts: list[str] = []
+    for segment in message.content:
+        match segment:
+            case segment if hasattr(segment, "text") and segment.type == "text":
+                parts.append(segment.text)
+            case segment if hasattr(segment, "thought_process") and segment.type == "think":
+                parts.append("> Thinking:")
+                parts.append(segment.thought_process)
+            case segment if hasattr(segment, "tool_name") and segment.type == "tool":
+                args = _format_arguments(segment.arguments or {}, max_lines=0)
+                parts.append(f"> Tool: {segment.tool_name}")
+                if args:
+                    parts.append(args)
+            case segment if hasattr(segment, "content") and segment.type == "tool_result":
+                parts.append(f"> Result: {segment.tool_name}")
+                parts.append(str(segment.content))
+    return "\n".join(parts)
