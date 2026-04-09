@@ -4,7 +4,6 @@ from typing import Any
 
 from pydantic import BaseModel, DirectoryPath, Field
 
-from src.omg_cli.config.constants import DEFAULT_CONFIG_DIR
 from src.omg_cli.types.message import Message
 
 
@@ -22,14 +21,18 @@ class SessionStorage:
     """Manages persistent storage of chat sessions.
 
     Storage layout:
-        ~/.config/omg-cli/sessions/
+        ~/.omg_cli/sessions/
         └── <session_id>/
             ├── metadata.json  # Session metadata
             └── messages.jsonl # Messages in JSON Lines format
     """
 
-    def __init__(self, config_dir: Path | None = None) -> None:
-        self.config_dir = config_dir or DEFAULT_CONFIG_DIR
+    def __init__(self, config_dir: Path | None) -> None:
+        if config_dir is None:
+            from src.omg_cli.config.manager import get_config_manager
+
+            config_dir = get_config_manager().config_dir
+        self.config_dir = config_dir
         self.sessions_dir = self.config_dir / "sessions"
 
     def _ensure_dir_exists(self) -> None:

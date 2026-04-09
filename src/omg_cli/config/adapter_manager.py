@@ -18,7 +18,7 @@ class AdapterManager:
 
     def list_adapters(self) -> list[str]:
         """List names of all configured models."""
-        models = self._config_manager.load_models()
+        models = self._config_manager.list_models()
         return [m.name for m in models]
 
     def get_adapter(self, name: str) -> ChatAdapter:

@@ -23,7 +23,7 @@ class ConfigManager:
 
     def __init__(self, config_dir: Path | None = None) -> None:
         self.config_dir = config_dir or DEFAULT_CONFIG_DIR
-        self.models_file = self.config_dir / "models.json"
+        self.models_file = self.config_dir / "models.toml"
         self.config_file = self.config_dir / "config.toml"
 
     def _ensure_dir_exists(self) -> None:
@@ -43,16 +43,14 @@ class ConfigManager:
             return {}
 
     def _save_toml(self, data: dict[str, Any]) -> None:
-        """Atomically save the main TOML config file with secure permissions."""
+        """Save the main TOML config file with secure permissions."""
         self._ensure_dir_exists()
-        temp_file = self.config_file.with_suffix(".tmp")
-        with open(temp_file, "wb") as f:
+        with open(self.config_file, "wb") as f:
             tomli_w.dump(data, f)
-        temp_file.chmod(0o600)
-        temp_file.rename(self.config_file)
+        self.config_file.chmod(0o600)
 
-    def load_models(self) -> list[ModelConfig]:
-        """Load all saved models."""
+    def list_models(self) -> list[ModelConfig]:
+        """List all configured models."""
         if not self.models_file.exists():
             return []
 
@@ -68,7 +66,7 @@ class ConfigManager:
                 model_data["name"] = name
                 models.append(ModelConfig.from_storage_dict(model_data))
             return models
-        except (tomllib.TOMLDecodeError, TypeError, KeyError, PydanticSerializationError):
+        except tomllib.TOMLDecodeError, TypeError, KeyError, PydanticSerializationError:
             return []
 
     def save_models(self, models: list[ModelConfig]) -> None:
@@ -82,46 +80,28 @@ class ConfigManager:
             entry.pop("name", None)
             storage_data[m.name] = entry
 
-        # Write to temp file first, then rename for atomic operation
-        temp_file = self.models_file.with_suffix(".tmp")
-        with open(temp_file, "wb") as f:
+        with open(self.models_file, "wb") as f:
             tomli_w.dump({"models": storage_data}, f)
-
-        # Set restrictive permissions: only owner can read/write (rw-------)
-        temp_file.chmod(0o600)
-
-        # Atomic rename
-        temp_file.rename(self.models_file)
+        self.models_file.chmod(0o600)
 
     def add_model(self, model: ModelConfig) -> None:
         """Add a new model."""
-        models = self.load_models()
+        models = self.list_models()
         # Remove existing model with same name
         models = [m for m in models if m.name != model.name]
         models.append(model)
         self.save_models(models)
 
-    def remove_model(self, name: str) -> bool:
-        """Remove a model by name."""
-        models = self.load_models()
-        original_len = len(models)
-        models = [m for m in models if m.name != name]
-        if len(models) < original_len:
-            self.save_models(models)
-            return True
-        return False
-
     def get_model(self, name: str) -> ModelConfig | None:
         """Get a model by name."""
-        models = self.load_models()
-        for m in models:
+        for m in self.list_models():
             if m.name == name:
                 return m
         return None
 
     def has_models(self) -> bool:
         """Check if any models are configured."""
-        return len(self.load_models()) > 0
+        return len(self.list_models()) > 0
 
     def load_user_config(self) -> UserConfig:
         """Load user configuration from TOML."""
@@ -141,7 +121,7 @@ class ConfigManager:
             return self.get_model(user_config.default_model)
 
         # If no default set, return first available model
-        models = self.load_models()
+        models = self.list_models()
         if models:
             return models[0]
         return None
@@ -156,16 +136,12 @@ class ConfigManager:
         self.save_user_config(user_config)
         return True
 
-    def list_models(self) -> list[ModelConfig]:
-        """List all configured models."""
-        return self.load_models()
-
     # ------------------------------------------------------------------
     # MCP Servers (TOML format, Codex-compatible)
     # ------------------------------------------------------------------
 
-    def load_mcp_servers(self) -> list[MCPServerConfig]:
-        """Load MCP server configurations from TOML [mcp_servers.<name>] sections."""
+    def list_mcp_servers(self) -> list[MCPServerConfig]:
+        """List all configured MCP servers."""
         data = self._load_toml()
         servers: list[MCPServerConfig] = []
 
@@ -196,11 +172,6 @@ class ConfigManager:
 
         return servers
 
-    @staticmethod
-    def _strip_none_values(obj: dict[str, Any]) -> dict[str, Any]:
-        """Remove None values from a dictionary for TOML serialization."""
-        return {k: v for k, v in obj.items() if v is not None}
-
     def save_mcp_servers(self, servers: list[MCPServerConfig]) -> None:
         """Save MCP server configurations to TOML [mcp_servers.<name>] sections."""
         data = self._load_toml()
@@ -215,7 +186,7 @@ class ConfigManager:
         # Add new mcp_servers in nested format
         mcp_data: dict[str, Any] = {}
         for server in servers:
-            mcp_data[server.name] = self._strip_none_values(server.model_dump(exclude={"name"}))
+            mcp_data[server.name] = {k: v for k, v in server.model_dump(exclude={"name"}).items() if v is not None}
 
         if mcp_data:
             data["mcp_servers"] = mcp_data
@@ -224,32 +195,17 @@ class ConfigManager:
 
     def add_mcp_server(self, server: MCPServerConfig) -> None:
         """Add a new MCP server configuration."""
-        servers = self.load_mcp_servers()
+        servers = self.list_mcp_servers()
         servers = [s for s in servers if s.name != server.name]
         servers.append(server)
         self.save_mcp_servers(servers)
 
-    def remove_mcp_server(self, name: str) -> bool:
-        """Remove an MCP server configuration by name."""
-        servers = self.load_mcp_servers()
-        original_len = len(servers)
-        servers = [s for s in servers if s.name != name]
-        if len(servers) < original_len:
-            self.save_mcp_servers(servers)
-            return True
-        return False
-
     def get_mcp_server(self, name: str) -> MCPServerConfig | None:
         """Get an MCP server configuration by name."""
-        servers = self.load_mcp_servers()
-        for s in servers:
+        for s in self.list_mcp_servers():
             if s.name == name:
                 return s
         return None
-
-    def list_mcp_servers(self) -> list[MCPServerConfig]:
-        """List all configured MCP servers."""
-        return self.load_mcp_servers()
 
 
 # Global config manager instance
