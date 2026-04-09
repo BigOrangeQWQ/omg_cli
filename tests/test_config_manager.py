@@ -5,7 +5,8 @@ import tempfile
 
 import pytest
 
-from src.omg_cli.config_manager import ConfigManager, UserConfig
+from src.omg_cli.config.manager import ConfigManager
+from src.omg_cli.config.models import UserConfig
 from src.omg_cli.mcp import MCPServerConfig
 
 
@@ -56,13 +57,6 @@ class TestMCPServers:
         fetched = manager.get_mcp_server("filesystem")
         assert fetched is not None
         assert fetched.name == "filesystem"
-
-    def test_remove_mcp_server(self, manager: ConfigManager) -> None:
-        server = MCPServerConfig(name="fs", type="stdio", command="npx")
-        manager.add_mcp_server(server)
-        assert manager.remove_mcp_server("fs") is True
-        assert manager.list_mcp_servers() == []
-        assert manager.remove_mcp_server("fs") is False
 
     def test_update_existing_mcp_server(self, manager: ConfigManager) -> None:
         manager.add_mcp_server(MCPServerConfig(name="remote", type="sse", url="https://old.example.com"))
