@@ -55,7 +55,7 @@ class TokenUsage(BaseModel):
     @property
     def remaining_usage(self) -> float:
         if self.max_context_size <= 0:
-            return 0.0
+            return 100.0
         return (self.remaining_tokens / self.max_context_size) * 100
 
     def __repr__(self) -> str:
