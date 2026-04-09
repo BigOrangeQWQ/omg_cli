@@ -58,6 +58,10 @@ class SessionLoadedEvent(BaseEvent):
     type: Literal["loaded"] = "loaded"
 
 
+class SessionCompactedEvent(BaseEvent):
+    type: Literal["compacted"] = "compacted"
+
+
 class SessionStreamDeltaEvent(BaseEvent):
     stream_event: MessageStreamEvent
     type: Literal["stream"] = "stream"
