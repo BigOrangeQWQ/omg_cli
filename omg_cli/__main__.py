@@ -4,6 +4,8 @@
 from pathlib import Path
 import sys
 
+from omg_cli.prompts import render_system_prompt
+
 # Ensure the project root is on sys.path so that internal `from omg_cli...`
 # imports resolve when launched via an installed console script.
 _project_root = Path(__file__).resolve().parent.parent.parent
@@ -18,7 +20,6 @@ from omg_cli.abstract.none import NoneAdapter
 from omg_cli.config import get_adapter_manager
 from omg_cli.context import ChatContext
 from omg_cli.log import logger
-from omg_cli.prompts.system_prompt import SYSTEM_PROMPT
 from omg_cli.shell import run_terminal
 
 
@@ -38,7 +39,8 @@ def main():
         help="Specify model name to use",
     )
     parser.add_argument(
-        "-r", "--session-id",
+        "-r",
+        "--session-id",
         type=str,
         help="Restore a previous session by its session ID",
     )
@@ -74,7 +76,7 @@ def main():
     # Create chat context
     context = ChatContext(
         provider=adapter,
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=render_system_prompt(Path.cwd()),
     )
 
     # Restore previous session if session ID is provided
