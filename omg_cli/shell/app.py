@@ -120,6 +120,8 @@ class ChatTerminalApp(App):
     async def start_import_wizard(self) -> None:
         composer = self.query_one("#composer", ComposerTextArea)
         composer.styles.display = "none"
+        messages = self.query_one("#messages", MessageHistoryView)
+        messages.styles.display = "none"
 
         container = self.query_one("#approval-container", Vertical)
         wizard = ImportWizard()
@@ -146,9 +148,6 @@ class ChatTerminalApp(App):
 
     async def on_ready(self) -> None:
         self._sync_composer_height()
-        self.call_after_refresh(self._focus_composer)
-        await self.check_and_show_import_wizard()
-        await self.context.initialize_mcp_servers()
 
     async def on_unmount(self) -> None:
         session_id = self.context.session_id
