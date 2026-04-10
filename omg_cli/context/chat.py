@@ -7,8 +7,9 @@ from omg_cli.context.command import CommandProtocol
 from omg_cli.context.meta import MetaContext, Notifier, tool_call_to_message
 from omg_cli.context.tool_manager import ToolConfirmationDecision, ToolManagerProtocol
 from omg_cli.types.event import SessionErrorEvent, SessionMessageEvent
-from omg_cli.types.message import Message, TextSegment, ToolCall
-from omg_cli.types.tool import ToolError
+from omg_cli.types.message import Message, ToolCall
+from omg_cli.types.skill import SkillRef
+from omg_cli.types.tool import Tool, ToolError
 
 SUB_ROUNDS_LIMIT = 10
 RESERVED_TOKENS = 50_000
@@ -23,9 +24,9 @@ class ChatContext(MetaContext):
         *,
         provider,
         system_prompt: str,
-        tools=None,
-        messages=None,
-        skills=None,
+        tools: list[Tool] | None = None,
+        messages: list[Message] | None = None,
+        skills: list[SkillRef] | None = None,
     ) -> None:
         super().__init__(
             provider=provider,
@@ -95,15 +96,7 @@ class ChatContext(MetaContext):
         user_input: str | list[str],
         **kwargs: Any,
     ) -> None:
-        user_inputs = [user_input] if isinstance(user_input, str) else user_input
-        if not user_inputs:
-            return
-
-        if not self.token_usage.initial_context_size:
-            await self._update_max_context_size()
-
-        for text in user_inputs:
-            await self.append(TextSegment(text=text).to_user_message(), display=True)
+        await super().send(user_input, **kwargs)
 
         await self.round(**kwargs)
 
