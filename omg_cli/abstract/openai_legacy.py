@@ -416,12 +416,12 @@ class OpenAILegacy(ChatAdapter):
             )
 
 
-def to_openai_messages(messages: ChatMessage) -> list[ChatCompletionMessageParam]:
+def to_openai_messages(message: ChatMessage) -> list[ChatCompletionMessageParam]:
     completion_messsages: list[ChatCompletionMessageParam] = []
-    match messages.role:
+    match message.role:
         case "user":
             user_segments: list[ChatCompletionContentPartParam] = []
-            for segment in messages.content:
+            for segment in message.content:
                 match segment:
                     case TextSegment(text=text):
                         user_segments.append(
@@ -447,7 +447,7 @@ def to_openai_messages(messages: ChatMessage) -> list[ChatCompletionMessageParam
             )
         case "assistant":
             assistant_segments: list[ContentArrayOfContentPart] = []
-            for segment in messages.content:
+            for segment in message.content:
                 match segment:
                     case TextSegment(text=text):
                         assistant_segments.append(
@@ -459,7 +459,7 @@ def to_openai_messages(messages: ChatMessage) -> list[ChatCompletionMessageParam
                     case ImageSegment(url=url):
                         raise NotImplementedError("Image segments not supported in assistant message")
             tools_calls: list[ChatCompletionMessageToolCallUnionParam] = []
-            for tool_call in messages.tool_calls:
+            for tool_call in message.tool_calls:
                 tools_calls.append(
                     ChatCompletionMessageFunctionToolCallParam(
                         id=tool_call.id,
@@ -474,28 +474,30 @@ def to_openai_messages(messages: ChatMessage) -> list[ChatCompletionMessageParam
                 role="assistant",
                 content=assistant_segments,
             )
+            if message.name:
+                assistant_message["name"] = message.name
             if tools_calls:
                 assistant_message["tool_calls"] = tools_calls
             completion_messsages.append(assistant_message)  # type: ignore[arg-type]
         case "system":
-            completion_messsages.append(ChatCompletionSystemMessageParam(role="system", content=messages.text))
+            completion_messsages.append(ChatCompletionSystemMessageParam(role="system", content=message.text))
 
     return completion_messsages
 
 
-def to_openai_response_input(messages: ChatMessage) -> list[dict[str, Any]]:
+def to_openai_response_input(message: ChatMessage) -> list[dict[str, Any]]:
     response_items: list[dict[str, Any]] = []
-    match messages.role:
+    match message.role:
         case "user" | "system" | "developer":
             response_items.append(
                 {
                     "type": "message",
-                    "role": messages.role,
-                    "content": to_openai_response_content(messages.content),
+                    "role": message.role,
+                    "content": to_openai_response_content(message.content),
                 }
             )
         case "assistant":
-            assistant_content = to_openai_response_content(messages.content)
+            assistant_content = to_openai_response_content(message.content)
             if assistant_content:
                 response_items.append(
                     {
@@ -504,7 +506,7 @@ def to_openai_response_input(messages: ChatMessage) -> list[dict[str, Any]]:
                         "content": assistant_content,
                     }
                 )
-            for tool_call in messages.tool_calls:
+            for tool_call in message.tool_calls:
                 response_items.append(
                     {
                         "type": "function_call",
@@ -516,7 +518,7 @@ def to_openai_response_input(messages: ChatMessage) -> list[dict[str, Any]]:
                 )
         case "tool":
             tool_segment = next(
-                (segment for segment in messages.content if isinstance(segment, ToolSegment)),
+                (segment for segment in message.content if isinstance(segment, ToolSegment)),
                 None,
             )
             if tool_segment is None:
@@ -525,7 +527,7 @@ def to_openai_response_input(messages: ChatMessage) -> list[dict[str, Any]]:
                 {
                     "type": "function_call_output",
                     "call_id": tool_segment.tool_call_id,
-                    "output": messages.text,
+                    "output": message.text,
                 }
             )
     return response_items
