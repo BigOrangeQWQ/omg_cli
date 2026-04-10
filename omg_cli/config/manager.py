@@ -1,5 +1,3 @@
-"""Configuration manager for omg-cli."""
-
 from pathlib import Path
 import tomllib
 from typing import Any

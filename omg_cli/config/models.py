@@ -1,5 +1,3 @@
-"""Configuration models for omg-cli."""
-
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, SecretStr
@@ -88,14 +86,17 @@ class ModelConfig(BaseModel):
         return cls.model_validate(data)
 
 
+class RoleConfig(BaseModel):
+    name: str
+    desc: str = ""
+    adapter_name: str
+
+
+class ChannelConfig(BaseModel):
+    project_path: str
+    default_role: str | None = None
+    assigned_roles: list[str] = Field(default_factory=list)
+
+
 class UserConfig(BaseModel):
-    """User configuration."""
-
     default_model: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return self.model_dump()
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "UserConfig":
-        return cls.model_validate(data)
