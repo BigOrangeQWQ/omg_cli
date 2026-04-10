@@ -248,7 +248,7 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
         self.token_usage.output_tokens = 0
 
         try:
-            summary_message = await self.provider.chat(
+            assistant_messages, _ = await self.thinking(
                 system_prompt=self.system_prompt,
                 messages=[
                     *self.messages,
@@ -256,10 +256,14 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
                         text=COMPACT_MD.format(CONTEXT=context_text, RECENT_MESSAGES_TO_KEEP=keep_recent)
                     ).to_user_message(),
                 ],
-                tools=[],
+                tools=self.tools,
+                display=False,
             )
             self.messages = []
-            await self.append(summary_message)
+            summary_text = ""
+            for msg in assistant_messages:
+                await self.append(msg, display=False)
+                summary_text += msg.text
         except Exception as exc:
             logger.error(f"LLM summarization failed: {exc}")
             raise ToolError(f"Context compaction failed: {exc}")
@@ -270,7 +274,7 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
         logger.success(result_msg)
 
         await self._emit(SessionCompactedEvent())
-        return summary_message.text
+        return summary_text
 
     async def thinking(
         self,
