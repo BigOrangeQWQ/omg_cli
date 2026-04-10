@@ -198,6 +198,9 @@ class Message(BaseModel):
         # Any text must come AFTER all tool results.
         self.content = sorted(self.content, key=lambda seg: isinstance(seg, ToolResultSegment), reverse=True)
 
+    def __str__(self) -> str:
+        return f"<message {f'name={self.name}' if self.name else ''} role={self.role}>{self.text}<message/>"
+
 
 class MessageStreamDeltaEvent(BaseModel):
     event: Literal["delta"] = "delta"
