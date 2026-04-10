@@ -448,38 +448,49 @@ class ChatTerminalApp(App):
 
         composer = self.query_one("#composer", ComposerTextArea)
         old_placeholder = composer.placeholder
-        composer.placeholder = "输入消息，Enter 发送，Ctrl+Enter 换行……"
+        old_text = composer.text
+        composer.placeholder = "输入拒绝原因，Enter 提交；或在上方选择操作（y/s/n）"
+        self._pending_rejection_future = asyncio.Future()
 
         try:
-            decision = await dialog.wait()
+            dialog_task = asyncio.create_task(dialog.wait())
+            composer_task = asyncio.ensure_future(self._pending_rejection_future)
+
+            done, pending_set = await asyncio.wait(
+                [dialog_task, composer_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            for task in pending_set:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+            result = next(iter(done)).result()
         finally:
             if dialog.is_mounted:
                 dialog.remove()
-
-        # Custom rejection reason selected – wait for the composer input.
-        if decision is None:
-            composer.placeholder = "输入拒绝原因，Enter 提交……"
-            composer.focus()
-            self._pending_rejection_future = asyncio.Future()
-            try:
-                reason = await self._pending_rejection_future
-            finally:
-                self._pending_rejection_future = None
-                composer.placeholder = old_placeholder
-                composer.focus()
-                self._sync_composer_height()
-            composer.load_text("")
-            decision = ToolConfirmationDecision(approved=False, reason=reason or "Rejected by user")
-        else:
+            self._pending_rejection_future = None
             composer.placeholder = old_placeholder
             composer.focus()
             self._sync_composer_height()
 
-        if decision.reason:
+        if isinstance(result, ToolConfirmationDecision):
+            decision = result
+            # 恢复原先输入的内容，以防用户在 composer 里误触键盘改了文字
+            composer.load_text(old_text)
+        else:
+            # result is str from composer
+            composer.load_text(old_text)
+            decision = ToolConfirmationDecision(approved=False, reason=result or "Rejected by user")
+
+        if not decision.approved and decision.reason:
             await self.logger.info(f"Tool call rejected: {tool.name}, reason: {decision.reason}")
 
         return decision
 
 
-def run_terminal(context: ChatContext) -> None:
-    ChatTerminalApp(context).run()
+def run_terminal(context: ChatContext, *, channel: bool = False) -> None:
+    ChatTerminalApp(context, channel_mode=channel).run()

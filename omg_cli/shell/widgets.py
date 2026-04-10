@@ -1003,7 +1003,7 @@ class ApprovalDialog(Vertical):
         ("y", "select_yes", "Select Yes"),
         ("s", "select_session", "Select Session"),
         ("n", "select_no", "Select Skip"),
-        ("r", "select_custom", "Select Custom Reason"),
+        ("r", "custom_reason", "Custom Reason"),
     ]
 
     def __init__(self, tool_name: str, arguments: str) -> None:
@@ -1034,11 +1034,7 @@ class ApprovalDialog(Vertical):
             widget.update(self._format_option(i, self.OPTIONS[i][0]))
 
     async def wait(self) -> ToolConfirmationDecision | None:
-        """Wait for the user to make a decision.
-
-        Returns None when the user chooses to provide a custom rejection reason,
-        signalling the caller to collect the reason via the composer input.
-        """
+        """Wait for the user to make a decision."""
         return await self._future
 
     def _resolve(self, decision: ToolConfirmationDecision | None) -> None:
@@ -1070,9 +1066,9 @@ class ApprovalDialog(Vertical):
         self.selected_index = 2
         self._confirm()
 
-    def action_select_custom(self) -> None:
-        self.selected_index = 3
-        self._confirm()
+    def action_custom_reason(self) -> None:
+        composer = self.app.query_one("#composer", ComposerTextArea)
+        composer.focus()
 
     def on_click(self, event) -> None:
         for i, widget in enumerate(self.option_widgets):
