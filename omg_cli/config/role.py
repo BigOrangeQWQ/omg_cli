@@ -106,6 +106,10 @@ class RoleManager:
         personal_space = self.config_dir / "roles" / role_config.name
         personal_space.mkdir(parents=True, exist_ok=True)
 
+        self_notes = personal_space / "SELF_NOTES.md"
+        if not self_notes.exists():
+            self_notes.touch()
+
         try:
             return Role(
                 name=role_config.name,
