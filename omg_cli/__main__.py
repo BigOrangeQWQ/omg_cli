@@ -44,6 +44,11 @@ def main():
         type=str,
         help="Restore a previous session by its session ID",
     )
+    parser.add_argument(
+        "--channel",
+        action="store_true",
+        help="Enable Channel mode for multi-role sub-agent collaboration",
+    )
     args = parser.parse_args()
 
     # Enable logging only in debug mode
@@ -87,7 +92,7 @@ def main():
         logger.info(f"已恢复会话: {args.session_id}")
 
     # Run TUI (this will block until app exits)
-    run_terminal(context)
+    run_terminal(context, channel=args.channel)
 
 
 if __name__ == "__main__":

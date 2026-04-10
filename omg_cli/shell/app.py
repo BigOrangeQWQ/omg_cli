@@ -492,4 +492,5 @@ class ChatTerminalApp(App):
 
 
 def run_terminal(context: ChatContext, *, channel: bool = False) -> None:
-    ChatTerminalApp(context, channel_mode=channel).run()
+    if not channel:
+        ChatTerminalApp(context).run()
