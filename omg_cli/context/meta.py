@@ -6,6 +6,8 @@ import json
 from typing import Any
 from uuid import uuid4
 
+from pydantic import TypeAdapter
+
 from omg_cli.abstract import ChatAdapter
 from omg_cli.config import get_config_manager
 from omg_cli.context.command import CommandProtocol
@@ -484,7 +486,7 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
 
     async def send(
         self,
-        user_input: str | list[str],
+        input_messages: str | list[str] | list[Message] | Message,
         **kwargs: Any,
     ) -> None:
         """
@@ -492,15 +494,20 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
         If currently in a thinking process, messages will be queued and sent after completion.
         """
         # Normalize to list of strings
-        texts = [user_input] if isinstance(user_input, str) else user_input
-        if not texts:
-            return
+        if isinstance(input_messages, Message):
+            _input_messages = [input_messages]
+        elif isinstance(input_messages, str):
+            _input_messages = [TextSegment(text=input_messages).to_user_message()]
+        elif TypeAdapter(list[str]).validate_python(input_messages):
+            _input_messages = [TextSegment(text=text).to_user_message() for text in input_messages]  # type: ignore
+        else:
+            _input_messages: list[Message] = input_messages  # type: ignore
+
+        for message in _input_messages:
+            self._message_queue.append(message)
 
         if not self.token_usage.initial_context_size:
             await self._initial_context_size()
-
-        for text in texts:
-            self._message_queue.append(Message(role="user", content=[TextSegment(text=text)]))
 
         await self.round(**kwargs)
 

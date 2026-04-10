@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Any
 
 from omg_cli.config import SessionMetadata
 from omg_cli.config.session_storage import SessionStorage
@@ -90,13 +89,6 @@ class ChatContext(MetaContext):
 
     def _clear_interrupt(self) -> None:
         self._interrupt_requested = False
-
-    async def send(
-        self,
-        user_input: str | list[str],
-        **kwargs: Any,
-    ) -> None:
-        await super().send(user_input, **kwargs)
 
     async def _run_single_tool_call(self, tool_call: ToolCall) -> Message:
         tool_name = tool_call.function.name
