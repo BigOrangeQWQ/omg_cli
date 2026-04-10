@@ -440,11 +440,20 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
         """
         Core loop for a single round of interaction with the LLM provider.
         """
-        round_num = 0
+        # If we don't have any messages yet, we should not call the provider
+        if not self._message_queue:
+            return
 
+        round_num = 0
         self._interrupt_requested = False
 
         while True:
+            # Flush pending user messages before each thinking call
+            if self._message_queue:
+                for msg in self._message_queue:
+                    await self.append(msg)
+                self._message_queue.clear()
+
             await self.logger.debug(f"Assistant request started: {self.provider.model_name}")
             logger.debug(f"Current token usage before request: {self.token_usage}")
 
@@ -463,16 +472,12 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
                 **provider_kwargs,
             )
 
-            if self._message_queue:
-                # If we have pending user messages, append them to the context for the next round
-                for msg in self._message_queue:
-                    await self.append(msg)
-                self._message_queue.clear()
-                continue
-
             # If interrupted or no tool calls, thinking is completed, break the loop
             if self._interrupt_requested or not tool_calls:
                 return None
+
+            if self._message_queue:
+                continue
 
             round_num += 1
             await self.logger.debug(f"Round completed: {round_num}")
@@ -480,9 +485,10 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
     async def send(
         self,
         user_input: str | list[str],
+        **kwargs: Any,
     ) -> None:
         """
-        Send user message(s) to the message queue.
+        Send user message(s) to the message queue and trigger a round.
         If currently in a thinking process, messages will be queued and sent after completion.
         """
         # Normalize to list of strings
@@ -495,6 +501,8 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
 
         for text in texts:
             self._message_queue.append(Message(role="user", content=[TextSegment(text=text)]))
+
+        await self.round(**kwargs)
 
     @abc.abstractmethod
     async def _run_single_tool_call(self, tool_call: ToolCall) -> Message:

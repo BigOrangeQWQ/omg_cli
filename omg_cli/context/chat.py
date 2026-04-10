@@ -98,8 +98,6 @@ class ChatContext(MetaContext):
     ) -> None:
         await super().send(user_input, **kwargs)
 
-        await self.round(**kwargs)
-
     async def _run_single_tool_call(self, tool_call: ToolCall) -> Message:
         tool_name = tool_call.function.name
         await self.logger.debug(f"Tool call started: {tool_name}")
