@@ -466,13 +466,19 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
             provider_kwargs = dict(kwargs)
             max_tokens = provider_kwargs.pop("max_tokens", None)
 
-            _assistant_messages, tool_calls = await self.thinking(
-                system_prompt=self.system_prompt,
-                messages=self.messages,
-                tools=self.tools,
-                max_tokens=max_tokens,
-                **provider_kwargs,
-            )
+            try:
+                _assistant_messages, tool_calls = await self.thinking(
+                    system_prompt=self.system_prompt,
+                    messages=self.messages,
+                    tools=self.tools,
+                    max_tokens=max_tokens,
+                    **provider_kwargs,
+                )
+            except Exception as exc:
+                for message in self.messages:
+                    logger.debug(f"Context message: role={message.role}, content={[str(s) for s in message.content]}")
+                logger.opt(exception=exc).error(f"Error during thinking: {exc}")
+                raise exc
 
             # If interrupted or no tool calls, thinking is completed, break the loop
             if self._interrupt_requested or not tool_calls:
