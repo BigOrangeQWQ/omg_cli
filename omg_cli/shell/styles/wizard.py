@@ -110,11 +110,6 @@ WIZARD_CSS = """
     margin: 0 1 0 1;
 }
 
-.role-wizard Input,
-.role-wizard TextArea {
-    border: none;
-}
-
 /* Role Selector Dialog */
 .role-selector-dialog {
     width: 60;
