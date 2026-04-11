@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 from enum import IntEnum
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
