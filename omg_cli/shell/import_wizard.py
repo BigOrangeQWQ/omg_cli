@@ -292,7 +292,7 @@ class ImportWizard(Vertical):
                 selected = i == self.selected_model_index
                 widget.update(self._format_option(i, widget.data_model, selected))
 
-    def action_confirm(self) -> None:
+    async def action_confirm(self) -> None:
         """Enter key action."""
         if self.page == 1:
             self._go_to_page2()
@@ -301,13 +301,13 @@ class ImportWizard(Vertical):
             if self.query_one("#p2-model-list-label", SafeStatic).styles.display == "block":
                 self._select_model_from_list()
             else:
-                self._submit_form()
+                await self._submit_form()
 
-    def action_handle_ctrl_c(self) -> None:
+    async def action_handle_ctrl_c(self) -> None:
         """Ctrl+C action: Page 1=Exit, Page 2=Back to Page 1."""
         if self.page == 1:
             self._cleanup()
-            self.remove()
+            await self.remove()
         else:
             # If model list is showing, hide it
             if self.query_one("#p2-model-list-label", SafeStatic).styles.display == "block":
@@ -353,10 +353,10 @@ class ImportWizard(Vertical):
                         pass
                 return
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
         """Enter in any input on page 2 submits the form."""
         if self.page == 2:
-            self._submit_form()
+            await self._submit_form()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Filter model list when user types in model input."""
@@ -557,7 +557,7 @@ class ImportWizard(Vertical):
         except Exception:
             pass
 
-    def _submit_form(self) -> None:
+    async def _submit_form(self) -> None:
         """Submit config form and save model."""
         baseurl_input = self.query_one("#p2-input-baseurl", Input)
         model_input = self.query_one("#p2-input-model", Input)
@@ -625,7 +625,7 @@ class ImportWizard(Vertical):
             config_manager.set_default_model(name)
 
         self._cleanup()
-        self.remove()
+        await self.remove()
 
         from .app import ChatTerminalApp
 
