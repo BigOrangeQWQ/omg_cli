@@ -34,6 +34,7 @@ class Role(BaseModel):
 class Thread(BaseModel):
     id: int
     title: str
+    description: str = ""
     messages: list[Message] = Field(default_factory=list)
     assigned_role_names: list[str] = Field(default_factory=list)
     reviewer_role_names: list[str] = Field(default_factory=list)
@@ -63,6 +64,7 @@ class Channel(BaseModel):
         self,
         title: str,
         *,
+        description: str = "",
         assigned_role_names: list[str] | None = None,
         reviewer_role_names: list[str] | None = None,
         parent_thread_id: int | None = None,
@@ -70,6 +72,7 @@ class Channel(BaseModel):
         thread = Thread(
             id=self.next_thread_id(),
             title=title,
+            description=description,
             assigned_role_names=list(assigned_role_names or []),
             reviewer_role_names=list(reviewer_role_names or []),
             parent_thread_id=parent_thread_id,
