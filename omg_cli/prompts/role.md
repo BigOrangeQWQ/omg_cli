@@ -48,7 +48,7 @@ You have access to an **unlimited personal workspace** (Person Space). You may u
 ## Receiving Messages
 
 When you receive a message from the user or another role, it will be formatted as follows:
-`<message name="{sender_name}" role="{sender_role}">{message_content}</message>`
+`<message name="{{sender_name}}" role="{{sender_role}}">{{message_content}}</message>`
 
 - The `name` attribute is optional and may be omitted if the sender has no name defined.
 - The `role` attribute indicates the role of the sender.

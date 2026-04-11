@@ -8,10 +8,12 @@ SYSTEM_PROMPT = (PROMPTS_DIR / "system.md").read_text("utf-8")
 
 ROLE_PROMPT = (PROMPTS_DIR / "role.md").read_text("utf-8")
 
+PLAN_PROMPT = (PROMPTS_DIR / "plan.md").read_text("utf-8")
+
 
 def render_system_prompt(workdir: Path) -> str:
     return SYSTEM_PROMPT.format(
-        WORKDIR=str(workdir),
+        WORK_DIR=str(workdir),
         AGENTS_PATH=str(workdir / "AGENTS.md"),
         NOTES_PATH=str(workdir / "NOTES.md"),
     )
@@ -27,6 +29,23 @@ def render_role_prompt(
         ROLE_NAME=role_name,
         ROLE_DESCRIPTION=role_description,
         ROLE_PERSONAL_SPACE_PATH=str(personal_space_path),
+        WORK_DIR=str(workdir),
+        AGENTS_PATH=str(workdir / "AGENTS.md"),
+        NOTES_PATH=str(workdir / "NOTES.md"),
+    )
+
+
+def render_plan_prompt(
+    role_name: str,
+    role_description: str,
+    personal_space_path: Path,
+    workdir: Path,
+) -> str:
+    return PLAN_PROMPT.format(
+        ROLE_NAME=role_name,
+        ROLE_DESCRIPTION=role_description,
+        ROLE_PERSONAL_SPACE_PATH=str(personal_space_path),
+        WORK_DIR=str(workdir),
         AGENTS_PATH=str(workdir / "AGENTS.md"),
         NOTES_PATH=str(workdir / "NOTES.md"),
     )
