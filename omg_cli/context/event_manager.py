@@ -36,6 +36,13 @@ class EventManager[E]:
         """Register a handler for a specific event type (non-decorator way)."""
         if event_type not in self._handlers:
             self._handlers[event_type] = []
+        # Prevent duplicate registration of the same bound method
+        for existing in self._handlers[event_type]:
+            if (
+                getattr(existing, "__self__", None) is getattr(handler, "__self__", None)
+                and getattr(existing, "__func__", None) is getattr(handler, "__func__", None)
+            ):
+                return
         self._handlers[event_type].append(handler)
 
     async def publish(self, event: E) -> None:
