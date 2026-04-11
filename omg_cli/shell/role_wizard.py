@@ -153,7 +153,9 @@ class RoleWizard(Vertical):
 
     def _set_focus(self) -> None:
         if self.page == 1:
+            self.can_focus_children = False
             self.focus()
+            self.can_focus_children = True
         else:
             try:
                 self.query_one("#rw-p2-name", Input).focus()
@@ -265,28 +267,28 @@ class RoleWizard(Vertical):
             _update_idx(current)
         self._last_model_selected_index = current
 
-    def action_confirm(self) -> None:
+    async def action_confirm(self) -> None:
         if self.page == 1:
             if self.selected_index < len(self._existing_roles):
-                self._select_existing_role()
+                await self._select_existing_role()
             else:
                 self._go_to_page2()
         else:
             if self.query_one("#rw-p2-model-list-label", SafeStatic).styles.display == "block":
                 self._select_model_from_list()
             else:
-                self._submit_form()
+                await self._submit_form()
 
-    def action_handle_ctrl_c(self) -> None:
+    async def action_handle_ctrl_c(self) -> None:
         if self.page == 1:
-            self._resolve(None)
+            await self._resolve(None)
         else:
             if self.query_one("#rw-p2-model-list-label", SafeStatic).styles.display == "block":
                 self._hide_model_list()
             elif self._existing_roles:
                 self._go_to_page1()
             else:
-                self._resolve(None)
+                await self._resolve(None)
 
     def action_quit_app(self) -> None:
         self.app.exit()
@@ -317,7 +319,7 @@ class RoleWizard(Vertical):
 
     # ===== Event Handlers =====
 
-    def on_click(self, event: Click) -> None:
+    async def on_click(self, event: Click) -> None:
         target_id = getattr(event.control, "id", None)
 
         if self.page == 1:
@@ -326,7 +328,7 @@ class RoleWizard(Vertical):
                     idx = int(target_id.split("-")[-1])
                     self.selected_index = idx
                     self._update_role_options()
-                    self._select_existing_role()
+                    await self._select_existing_role()
                 except ValueError:
                     pass
             elif target_id == "rw-p1-create":
@@ -357,13 +359,13 @@ class RoleWizard(Vertical):
             else:
                 self._update_model_list(self._model_names)
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
         if self.page == 2:
             model_list_label = self.query_one("#rw-p2-model-list-label", SafeStatic)
             if event.input.id == "rw-p2-model" and model_list_label.styles.display == "block":
                 self._select_model_from_list()
             else:
-                self._submit_form()
+                await self._submit_form()
 
     async def on_focus(self, event) -> None:
         if self.page == 2:
@@ -372,7 +374,7 @@ class RoleWizard(Vertical):
                 if self.query_one("#rw-p2-model-list-label", SafeStatic).styles.display != "block":
                     self._update_model_list(self._model_names)
 
-    def _select_existing_role(self) -> None:
+    async def _select_existing_role(self) -> None:
         if not self._existing_roles:
             self._show_error("没有可用的 Role，请先创建")
             return
@@ -380,7 +382,7 @@ class RoleWizard(Vertical):
             self._show_error("请先选择一个 Role")
             return
         role_name = self._existing_roles[self.selected_index].name
-        self._resolve(RoleWizardResult(role_name=role_name, is_new=False))
+        await self._resolve(RoleWizardResult(role_name=role_name, is_new=False))
 
     def _select_model_by_index(self, index: int) -> None:
         widget = self.model_option_widgets[index]
@@ -404,7 +406,7 @@ class RoleWizard(Vertical):
     def _clear_error(self) -> None:
         self.query_one("#rw-p2-error", SafeStatic).update("")
 
-    def _submit_form(self) -> None:
+    async def _submit_form(self) -> None:
         name_input = self.query_one("#rw-p2-name", Input)
         desc_input = self.query_one("#rw-p2-desc", TextArea)
         model_input = self.query_one("#rw-p2-model", Input)
@@ -438,12 +440,12 @@ class RoleWizard(Vertical):
         role_config = RoleConfig(name=name, desc=desc, adapter_name=model)
         self._role_manager.add_role_config(role_config)
 
-        self._resolve(RoleWizardResult(role_name=name, is_new=True))
+        await self._resolve(RoleWizardResult(role_name=name, is_new=True))
 
-    def _resolve(self, result: RoleWizardResult | None) -> None:
+    async def _resolve(self, result: RoleWizardResult | None) -> None:
         self._cleanup()
-        self.remove()
         self.post_message(self.Completed(result, exit_on_cancel=self._exit_on_cancel))
+        await self.remove()
 
     def _cleanup(self) -> None:
         from .app import ChatTerminalApp
