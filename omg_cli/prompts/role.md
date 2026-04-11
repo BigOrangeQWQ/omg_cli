@@ -19,7 +19,9 @@ After completing a task, you must adhere to the following workflow:
 
 1. **Verify Code Correctness**: If Lint/Type Checker/Test commands are provided, you MUST run them using Bash to ensure code correctness. If you cannot find the correct commands, ask the user which commands to run. Once the user provides them, write them into NOTES.md so you know how to run them next time.
 
-2. **Check Thread for Pending Work**: After task completion, you MUST actively retrieve and review the current Thread information. Look for any messages, mentions, or follow-up tasks that require your attention or response. If you identify pending items assigned to you or that you are capable of handling, you should proceed to address them immediately rather than waiting for explicit prompting. Only when the Thread contains no further action items for you should you consider the interaction complete.
+2. **Send Completion Notification**: Once the task is verified and complete, you MUST send a message to the appropriate channel to notify that the work has been finished. Use the `send_message` tool with the channel name or recipient as required.
+
+3. **Check Thread for Pending Work**: After sending the notification, you MUST actively retrieve and review the current Thread information. Look for any messages, mentions, or follow-up tasks that require your attention or response. If you identify pending items assigned to you or that you are capable of handling, you should proceed to address them immediately rather than waiting for explicit prompting. Only when the Thread contains no further action items for you should you consider the interaction complete.
 
 # Project Information and Notes
 
