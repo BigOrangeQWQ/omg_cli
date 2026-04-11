@@ -1,9 +1,10 @@
 from datetime import UTC, datetime
 from enum import IntEnum
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 
+from omg_cli.types.channel import Thread
 from omg_cli.types.message import (
     Message,
     MessageStreamCompleteEvent,
@@ -76,3 +77,19 @@ class AppExitEvent(BaseEvent):
     """Event to signal application exit."""
 
     type: Literal["app_exit"] = "app_exit"
+
+
+class ThreadMessageEvent(BaseEvent):
+    """Event emitted when a message is added to a specific thread in channel mode."""
+
+    thread_id: int
+    message: Message
+    type: Literal["thread_message"] = "thread_message"
+
+
+class ThreadSpawnedEvent(BaseEvent):
+    """Event emitted when a new thread is spawned in channel mode."""
+
+    thread: "Thread"
+    first_message: Message
+    type: Literal["thread_spawned"] = "thread_spawned"
