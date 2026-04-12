@@ -1,0 +1,1 @@
+System reminder: Your last round of tool calls did not include send_message or updateThreadStatus. If you need to send a message to the thread, use the send_message tool; if you need to change the thread status, use the updateThreadStatus tool.

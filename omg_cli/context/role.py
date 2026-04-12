@@ -12,7 +12,7 @@ from omg_cli.config.role import RoleManager, get_role_manager
 from omg_cli.context.chat import ChatContext
 from omg_cli.context.meta import MetaContext, tool_call_to_message
 from omg_cli.log import logger
-from omg_cli.prompts import render_plan_prompt, render_role_prompt
+from omg_cli.prompts import render_plan_prompt, render_role_prompt, render_role_round_reminder_prompt
 from omg_cli.types.channel import Role, RoleActivityRecord, Thread, ThreadStatus
 from omg_cli.types.event import (
     BaseEvent,
@@ -23,6 +23,7 @@ from omg_cli.types.event import (
     StatusLevel,
     ThreadMessageEvent,
     ThreadSpawnedEvent,
+    ThreadStatusChangedEvent,
 )
 from omg_cli.types.message import Message, TextSegment, ToolCall
 from omg_cli.types.skill import SkillRef
@@ -42,10 +43,6 @@ class SpawnThreadResult(BaseModel):
     thread_id: int
     title: str
     status: str
-
-
-class SendMessageResult(BaseModel):
-    success: bool
 
 
 class RecentMessage(BaseModel):
@@ -110,6 +107,7 @@ class ChannelContext:
             self.default_role_name = get_channel_manager().get_channel_default_role(channel_name)
 
         self._bg_tasks: set[asyncio.Task] = set()
+        self._stalled_reminder_sent: set[int] = set()
         self._spawn_thread_tool: Tool[Any] | None = None
         self._setup_spawn_thread_tool()
         self.initialize_default_role_context(provider=provider, system_prompt=system_prompt)
@@ -161,10 +159,10 @@ class ChannelContext:
 
         async def _send_message(thread_id: int, content: str) -> bool:
             try:
-                return await self.send_message(thread_id=thread_id, role_name=role.name, content=content)
+                success = await self.send_message(thread_id=thread_id, role_name=role.name, content=content)
+                return success
             except Exception as exc:
                 raise ToolError(f"Failed to send message: {exc}") from exc
-                return False
 
         class SendMessageArguments(BaseModel):
             thread_id: int
@@ -181,14 +179,14 @@ class ChannelContext:
             ).bind(_send_message)
         )
 
-        async def _get_recent_messages(thread_id: int, limit: int = 10) -> list[dict[str, Any]]:
+        async def _get_recent_messages(thread_id: int, limit: int = 10) -> list[RecentMessage]:
             messages = self.get_recent_messages(thread_id, limit)
             return [
-                {
-                    "role": msg.role,
-                    "name": msg.name,
-                    "content": " ".join(str(segment) for segment in msg.content),
-                }
+                RecentMessage(
+                    role=msg.role,
+                    name=msg.name,
+                    content=msg.text,
+                )
                 for msg in messages
             ]
 
@@ -216,6 +214,7 @@ class ChannelContext:
         async def _notify() -> None:
             token = _current_thread_id.set(thread_id)
             try:
+                dispatched = []
                 async with TaskGroup() as tg:
                     for role_name in role_names:
                         ctx = self.thread_roles[thread_id].get(role_name)
@@ -225,7 +224,40 @@ class ChannelContext:
                             )
                             continue
                         logger.debug(f"Dispatching message to role '{role_name}' in thread {thread_id}: {message}")
+                        ctx._round_has_effect = False
+                        dispatched.append((role_name, ctx))
                         tg.create_task(ctx.send(message))
+
+                any_effect = any(role_ctx._round_has_effect for _, role_ctx in dispatched)
+                if dispatched and not any_effect:
+                    thread = self.thread_map.get(thread_id)
+                    if thread is not None and thread.status == ThreadStatus.RUNNING:
+                        thread.status = ThreadStatus.STALLED
+                        await self.default_context._emit(
+                            ThreadStatusChangedEvent(
+                                thread_id=thread_id,
+                                status=thread.status.value.strip(),
+                            )
+                        )
+                        for role_name, role_ctx in dispatched:
+                            self.record_role_activity(
+                                thread_id=thread_id,
+                                role_name=role_name,
+                                activity_type="status",
+                                content=f"{role_name} finished without sending a message or updating thread status",
+                            )
+                        if thread_id not in self._stalled_reminder_sent:
+                            reminder = Message(
+                                role="system",
+                                name="system",
+                                content=[TextSegment(text=render_role_round_reminder_prompt())],
+                            )
+                            thread.messages.append(reminder)
+                            await self.default_context._emit(ThreadMessageEvent(thread_id=thread_id, message=reminder))
+                            self._stalled_reminder_sent.add(thread_id)
+                            assigned_roles = thread.assigned_role_names
+                            if assigned_roles:
+                                self._dispatch_to_roles(thread_id, reminder, assigned_roles)
             finally:
                 _current_thread_id.reset(token)
 
@@ -248,6 +280,15 @@ class ChannelContext:
         )
 
         thread.messages.append(message)
+        if thread.status == ThreadStatus.STALLED:
+            thread.status = ThreadStatus.RUNNING
+            self._stalled_reminder_sent.discard(thread_id)
+            await self.default_context._emit(
+                ThreadStatusChangedEvent(
+                    thread_id=thread_id,
+                    status=thread.status.value.strip(),
+                )
+            )
         await self.default_context._emit(ThreadMessageEvent(thread_id=thread_id, message=message))
 
         mentions = self._extract_mentions(content)
@@ -286,8 +327,15 @@ class ChannelContext:
         if message not in thread.messages:
             thread.messages.append(message)
 
-        if thread.status == ThreadStatus.DRAFT:
+        if thread.status in (ThreadStatus.DRAFT, ThreadStatus.STALLED):
             thread.status = ThreadStatus.RUNNING
+            self._stalled_reminder_sent.discard(thread_id)
+            await self.default_context._emit(
+                ThreadStatusChangedEvent(
+                    thread_id=thread_id,
+                    status=thread.status.value.strip(),
+                )
+            )
 
         assigned_roles = thread.assigned_role_names
         if not assigned_roles:
@@ -414,10 +462,40 @@ After receiving the message, you **NEED** to cooperate with each other and divid
             ).bind(_list_available_roles)
         )
 
+        async def _update_thread_status(thread_id: int, status: ThreadStatus) -> bool:
+            thread = self.thread_map.get(thread_id)
+            if thread is None:
+                raise ToolError(f"Thread {thread_id} not found")
+            status_clean = status.strip().lower()
+            for ts in ThreadStatus:
+                if ts.value.strip() == status_clean:
+                    thread.status = ts
+                    break
+            else:
+                valid = [s.value.strip() for s in ThreadStatus]
+                raise ToolError(f"Invalid status '{status}'. Valid: {', '.join(valid)}")
+            await self.default_context._emit(
+                ThreadStatusChangedEvent(
+                    thread_id=thread.id,
+                    status=thread.status.value.strip(),
+                )
+            )
+            return True
+
+        self.default_context.register_tool(
+            Tool(
+                name="updateThreadStatus",
+                description="Update the status of a thread. Valid statuses: draft, running, review, done, error.",
+                params_model=UpdateThreadStatusArguments,
+            ).bind(_update_thread_status)
+        )
+
     def initialize_default_role_context(self, provider: Any = None, system_prompt: str = "") -> None:
         default_role = None
         if self.default_role_name:
             default_role = next((r for r in self.roles if r.name == self.default_role_name), None)
+
+        old_context = getattr(self, "default_context", None)
 
         if default_role is not None:
             ctx_provider = default_role.adapter
@@ -434,6 +512,9 @@ After receiving the message, you **NEED** to cooperate with each other and divid
                 self.default_context.unregister_tool(tool_name)
         else:
             self.default_context = ChatContext(provider=provider, system_prompt=system_prompt)
+
+        if old_context is not None:
+            self.default_context._event_manager.copy_handlers_from(old_context._event_manager)
 
     def set_default_role(self, default_role_name: str) -> None:
         from omg_cli.config.role import get_role_manager
@@ -499,6 +580,9 @@ class ThreadRoleContext(MetaContext):
     unattended multi-agent execution inside a Channel.
     """
 
+    role: Role
+    _round_has_effect: bool
+
     def __init__(
         self,
         *,
@@ -521,14 +605,18 @@ class ThreadRoleContext(MetaContext):
             messages=messages,
             skills=skills,
         )
+        self._round_has_effect = False
 
     async def round(self, **kwargs) -> None:
         await self.logger.info(f"🤖 {self.role.name} 开始处理...")
+        self._round_has_effect = False
         await super().round(**kwargs)
         await self.logger.info(f"🤖 {self.role.name} 处理完成")
 
     async def _run_single_tool_call(self, tool_call: ToolCall) -> Message:
         tool_name = tool_call.function.name
+        if tool_name in {"send_message", "updateThreadStatus"}:
+            self._round_has_effect = True
         args_str = _format_arguments(tool_call.function.arguments, max_lines=0)
         await self.logger.info(f"🔧 {self.role.name} 调用工具: {tool_name} | 参数: {args_str}")
 

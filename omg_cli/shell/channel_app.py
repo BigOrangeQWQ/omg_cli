@@ -14,6 +14,7 @@ from omg_cli.types.event import (
     SessionMessageEvent,
     ThreadMessageEvent,
     ThreadSpawnedEvent,
+    ThreadStatusChangedEvent,
 )
 from omg_cli.types.message import Message, TextSegment
 
@@ -265,8 +266,18 @@ class ChannelTerminalApp(MetaApp):
         await self._hide_thread_list()
 
     async def _on_thread_spawned(self, event: ThreadSpawnedEvent) -> None:
+        if event.thread.id not in self.channel_context.thread_map:
+            self.channel_context.threads.append(event.thread)
+            self.channel_context.thread_map[event.thread.id] = event.thread
+            self.channel_context.thread_roles[event.thread.id] = {
+                r.name: self.channel_context.role_contexts[r.name]
+                for r in self.channel_context.roles
+            }
         for list_view in self.query(ThreadListView):
+            list_view.update_threads(list(self.channel_context.threads))
+            list_view.set_selected_thread_id(event.thread.id)
             await list_view._refresh_items()
+        await self._switch_to_thread(event.thread.id)
         if event.thread.id == self.active_thread_id:
             await self._mount_message(event.first_message)
 
@@ -290,6 +301,10 @@ class ChannelTerminalApp(MetaApp):
                 thread.messages.append(event.message)
             if self.active_thread_id == event.thread_id:
                 await super()._handle_context_event(SessionMessageEvent(message=event.message))
+            for list_view in self.query(ThreadListView):
+                if list_view.is_mounted:
+                    list_view.update_threads(list(self.channel_context.threads))
+                    await list_view._refresh_items()
             return
 
         if isinstance(event, RoleActivityEvent):
@@ -320,6 +335,13 @@ class ChannelTerminalApp(MetaApp):
                 thread.messages.append(event.message)
             if self.active_thread_id == 0:
                 await super()._handle_context_event(event)
+            return
+
+        if isinstance(event, ThreadStatusChangedEvent):
+            for list_view in self.query(ThreadListView):
+                if list_view.is_mounted:
+                    list_view.update_threads(list(self.channel_context.threads))
+                    await list_view._refresh_items()
             return
 
         if isinstance(event, ThreadSpawnedEvent):

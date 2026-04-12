@@ -105,3 +105,11 @@ class RoleActivityEvent(BaseEvent):
     activity_type: Literal["thinking", "tool_call", "status", "error", "stream"]
     content: str
     type: Literal["role_activity"] = "role_activity"
+
+
+class ThreadStatusChangedEvent(BaseEvent):
+    """Event emitted when a thread's status is updated."""
+
+    thread_id: int
+    status: str
+    type: Literal["thread_status_changed"] = "thread_status_changed"

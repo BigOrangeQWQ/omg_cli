@@ -16,6 +16,7 @@ class ThreadStatus(StrEnum):
     REVIEW = "review"
     DONE = "done"
     ERROR = "error"
+    STALLED = "stalled"
 
 
 class Role(BaseModel):

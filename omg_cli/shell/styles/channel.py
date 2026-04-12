@@ -219,7 +219,6 @@ CHANNEL_CSS = """
     border: none;
     display: none;
     background: $surface-darken-1;
-    layer: above;
 }
 
 .mention-item {
@@ -257,6 +256,28 @@ CHANNEL_CSS = """
     height: 1;
     text-align: center;
     margin: 0 0 1 0;
+}
+
+.inspect-body {
+    width: 100%;
+    height: 1fr;
+}
+
+#inspect-list {
+    width: 40%;
+    height: 100%;
+    border: solid $primary-darken-2;
+    background: $surface-darken-1;
+    scrollbar-size: 0 0;
+}
+
+.inspect-detail {
+    width: 1fr;
+    height: 100%;
+    border: solid $primary-darken-2;
+    background: $surface-darken-2;
+    padding: 0 1;
+    color: $text;
 }
 
 .inspect-records {

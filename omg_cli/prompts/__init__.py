@@ -10,6 +10,8 @@ ROLE_PROMPT = (PROMPTS_DIR / "role.md").read_text("utf-8")
 
 PLAN_PROMPT = (PROMPTS_DIR / "plan.md").read_text("utf-8")
 
+ROLE_ROUND_REMINDER_MD = (PROMPTS_DIR / "role_round_reminder.md").read_text("utf-8")
+
 
 def render_system_prompt(workdir: Path) -> str:
     return SYSTEM_PROMPT.format(
@@ -49,3 +51,7 @@ def render_plan_prompt(
         AGENTS_PATH=str(workdir / "AGENTS.md"),
         NOTES_PATH=str(workdir / "NOTES.md"),
     )
+
+
+def render_role_round_reminder_prompt() -> str:
+    return ROLE_ROUND_REMINDER_MD.strip()

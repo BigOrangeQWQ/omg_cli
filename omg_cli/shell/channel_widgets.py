@@ -94,7 +94,7 @@ class MentionPalette(ListView):
     ]
 
     def __init__(self, roles: list[Role]) -> None:
-        super().__init__(classes="mention-palette", id="mention-palette")
+        super().__init__(classes="mention-palette")
         self.roles = roles
         self.role_names = [r.name for r in roles]
         self._future: asyncio.Future[str | None] | None = None
@@ -157,10 +157,12 @@ class MentionPalette(ListView):
         return await self._get_future()
 
 
-def _thread_create_parent(widget: Widget) -> "ThreadCreateWidget | None":
-    parent = widget.parent
-    if isinstance(parent, ThreadCreateWidget):
-        return parent
+def _thread_create_parent(widget: Widget) -> "ThreadCreateWidget | ThreadPlanningWidget | None":
+    node = widget.parent
+    while node is not None:
+        if isinstance(node, (ThreadCreateWidget, ThreadPlanningWidget)):
+            return node
+        node = node.parent
     return None
 
 
@@ -186,14 +188,11 @@ class _MentionInput(Input):
         super().__init__(*args, **kwargs)
 
     def on_mount(self) -> None:
-        # Create palette as a sibling in the DOM; actual mounting deferred to parent
-        pass
+        # Pre-mount palette as a sibling to avoid layout race when typing @
+        self._mention_palette = MentionPalette(self.roles)
+        self.parent.mount(self._mention_palette)
 
     def _ensure_palette(self) -> MentionPalette | None:
-        parent = _thread_create_parent(self)
-        if self._mention_palette is None and parent is not None:
-            self._mention_palette = MentionPalette(self.roles)
-            parent.mount(self._mention_palette)
         return self._mention_palette
 
     async def _on_key(self, event) -> None:
@@ -272,6 +271,9 @@ class ThreadPlanningWidget(Vertical):
         if self._future is None:
             self._future = asyncio.Future()
         return self._future
+
+    async def action_cancel(self) -> None:
+        await self._resolve(None)
 
     def compose(self) -> ComposeResult:
         yield SafeStatic("📋 任务规划", classes="thread-planning-title")
@@ -480,8 +482,10 @@ class ThreadSidebar(Vertical):
         mapping = {
             ThreadStatus.DRAFT: "○",
             ThreadStatus.RUNNING: "▶",
+            ThreadStatus.REVIEW: "◐",
             ThreadStatus.DONE: "✓",
             ThreadStatus.ERROR: "✗",
+            ThreadStatus.STALLED: "⏸",
         }
         return mapping.get(status, "○")
 
@@ -563,6 +567,20 @@ class ThreadCreateWidget(Vertical):
             self.query_one("#tc-desc", _ThreadDescArea).focus()
         elif event.input.id == "tc-assign":
             self.query_one("#tc-title", Input).focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        sender = event.input
+        if isinstance(sender, _MentionInput):
+            palette = sender._mention_palette
+            if palette is not None:
+                future = palette._get_future()
+                if not future.done():
+                    self.run_worker(self._watch_mention_palette(sender, palette), thread=False)
+
+    async def _watch_mention_palette(self, input_widget: _MentionInput, palette: MentionPalette) -> None:
+        role_name = await palette.wait()
+        if role_name is not None and input_widget.is_mounted:
+            await input_widget.on_mentioned(role_name)
 
     async def _confirm(self) -> None:
         title_input = self.query_one("#tc-title", Input)
@@ -647,16 +665,25 @@ class ThreadListView(Vertical):
             ThreadStatus.REVIEW: "◐",
             ThreadStatus.DONE: "✓",
             ThreadStatus.ERROR: "✗",
+            ThreadStatus.STALLED: "⏸",
         }
         return mapping.get(status, "○")
+
+    def set_selected_thread_id(self, thread_id: int) -> None:
+        sorted_threads = self._sort_threads()
+        for i, thread in enumerate(sorted_threads):
+            if thread.id == thread_id:
+                self._selected_index = i
+                break
 
     def _sort_threads(self) -> list[Thread]:
         priority = {
             ThreadStatus.RUNNING: 0,
             ThreadStatus.DRAFT: 1,
-            ThreadStatus.REVIEW: 2,
-            ThreadStatus.DONE: 3,
-            ThreadStatus.ERROR: 4,
+            ThreadStatus.STALLED: 2,
+            ThreadStatus.REVIEW: 3,
+            ThreadStatus.DONE: 4,
+            ThreadStatus.ERROR: 5,
         }
         return sorted(self._threads, key=lambda t: (priority.get(t.status, 99), t.id))
 
@@ -701,6 +728,9 @@ class ThreadListView(Vertical):
                 widget.scroll_visible()
                 break
 
+    def update_threads(self, threads: list[Thread]) -> None:
+        self._threads = threads
+
     async def action_cursor_up(self) -> None:
         if self._selected_index > 0:
             self._selected_index -= 1
@@ -742,6 +772,10 @@ class InspectWidget(Vertical):
     BINDINGS: ClassVar[list[BindingType]] = [
         ("escape", "dismiss", "Dismiss"),
         ("ctrl+c", "dismiss", "Dismiss"),
+        ("ctrl+d", "dismiss", "Dismiss"),
+        ("up", "cursor_up", "Up"),
+        ("down", "cursor_down", "Down"),
+        ("enter", "select", "Select"),
     ]
 
     class Dismissed(Message):
@@ -751,44 +785,90 @@ class InspectWidget(Vertical):
         super().__init__(classes="inspect-widget")
         self.thread_id = thread_id
         self.role_name = role_name
-        self._record_items: list[SafeStatic] = []
+        self._records: list[Any] = []
+        self._list_view: ListView | None = None
+        self._detail_widget: SafeStatic | None = None
 
     def compose(self) -> ComposeResult:
         yield SafeStatic(
             f"🔍 Inspect Thread #{self.thread_id} - {self.role_name}",
             classes="inspect-title",
         )
-        with Vertical(classes="inspect-records"):
-            pass
+        with Horizontal(classes="inspect-body"):
+            yield ListView(id="inspect-list")
+            yield SafeStatic("", classes="inspect-detail", id="inspect-detail")
 
     def on_mount(self) -> None:
+        self._list_view = self.query_one("#inspect-list", ListView)
+        self._detail_widget = self.query_one("#inspect-detail", SafeStatic)
+        if self._list_view is not None and self._records:
+            self._list_view.index = 0
+            self._update_detail(0)
         self.focus()
 
+    def _build_list_item(self, record: Any) -> ListItem:
+        ts = record.created_at.strftime("%H:%M:%S")
+        preview = record.content[:50] + "..." if len(record.content) > 50 else record.content
+        type_label = "" if record.activity_type == "status" else f"{record.activity_type}: "
+        display = f"[{ts}] {type_label}{preview}"
+        return ListItem(SafeStatic(display), classes=f"inspect-record inspect-record--{record.activity_type}")
+
     def load_records(self, records: list[Any]) -> None:
-        container = self.query_one(".inspect-records", Vertical)
-        for record in records:
-            item = self._build_record_item(record)
-            container.mount(item)
-            self._record_items.append(item)
-        self._scroll_to_bottom()
+        self._records = list(records)
+        if self._list_view is not None:
+            self._list_view.clear()
+            for record in self._records:
+                self._list_view.append(self._build_list_item(record))
+            if self._records:
+                self._list_view.index = 0
+                self._update_detail(0)
 
     def add_record(self, record: Any) -> None:
-        container = self.query_one(".inspect-records", Vertical)
-        item = self._build_record_item(record)
-        container.mount(item)
-        self._record_items.append(item)
-        self._scroll_to_bottom()
+        self._records.append(record)
+        if self._list_view is not None:
+            self._list_view.append(self._build_list_item(record))
+            if len(self._records) == 1:
+                self._list_view.index = 0
+                self._update_detail(0)
 
-    def _build_record_item(self, record: Any) -> SafeStatic:
+    def _update_detail(self, index: int) -> None:
+        if self._detail_widget is None or not (0 <= index < len(self._records)):
+            return
+        record = self._records[index]
         ts = record.created_at.strftime("%H:%M:%S")
-        variant = record.activity_type
-        display = f"[{ts}] {variant}: {record.content}"
-        classes = f"inspect-record inspect-record--{variant}"
-        return SafeStatic(display, classes=classes)
+        type_header = "" if record.activity_type == "status" else f" {record.activity_type}"
+        lines = [
+            f"[{ts}]{type_header}",
+            "=" * 40,
+            record.content,
+        ]
+        self._detail_widget.update("\n".join(lines))
 
-    def _scroll_to_bottom(self) -> None:
-        container = self.query_one(".inspect-records", Vertical)
-        container.scroll_end(animate=False)
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        if self._list_view is None or event.item is None:
+            return
+        index = self._list_view.index
+        if index is not None:
+            self._update_detail(index)
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if self._list_view is None or event.item is None:
+            return
+        index = self._list_view.index
+        if index is not None:
+            self._update_detail(index)
+
+    def action_cursor_up(self) -> None:
+        if self._list_view is not None:
+            self._list_view.action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        if self._list_view is not None:
+            self._list_view.action_cursor_down()
+
+    def action_select(self) -> None:
+        if self._list_view is not None and self._list_view.index is not None:
+            self._update_detail(self._list_view.index)
 
     async def action_dismiss(self) -> None:
         self.post_message(self.Dismissed())
