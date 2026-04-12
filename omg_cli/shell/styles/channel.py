@@ -241,4 +241,54 @@ CHANNEL_CSS = """
     text-style: bold;
     padding: 0 1;
 }
+
+/* Inspect Widget */
+.inspect-widget {
+    width: 1fr;
+    height: 1fr;
+    border: solid $primary-darken-2;
+    background: $surface-darken-1;
+    padding: 1;
+}
+
+.inspect-title {
+    text-style: bold;
+    color: $primary;
+    height: 1;
+    text-align: center;
+    margin: 0 0 1 0;
+}
+
+.inspect-records {
+    width: 100%;
+    height: 1fr;
+    overflow-y: auto;
+}
+
+.inspect-record {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    color: $text;
+}
+
+.inspect-record--error {
+    color: $error;
+}
+
+.inspect-record--thinking {
+    color: $warning;
+}
+
+.inspect-record--tool_call {
+    color: $primary;
+}
+
+.inspect-record--status {
+    color: $text-muted;
+}
+
+.inspect-record--stream {
+    color: $success;
+}
 """

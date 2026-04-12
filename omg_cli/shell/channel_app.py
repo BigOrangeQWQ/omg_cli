@@ -1,6 +1,6 @@
 import asyncio
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from textual.binding import BindingType
 from textual.containers import Vertical
@@ -10,6 +10,7 @@ from omg_cli.context.role import ChannelContext
 from omg_cli.types.command import MetaCommand
 from omg_cli.types.event import (
     BaseEvent,
+    RoleActivityEvent,
     SessionMessageEvent,
     ThreadMessageEvent,
     ThreadSpawnedEvent,
@@ -17,6 +18,7 @@ from omg_cli.types.event import (
 from omg_cli.types.message import Message, TextSegment
 
 from .channel_widgets import (
+    InspectWidget,
     RoleSelectorDialog,
     ThreadCreateWidget,
     ThreadListView,
@@ -41,6 +43,7 @@ class ChannelTerminalApp(MetaApp):
         super().__init__(channel_context.default_context)
         self.channel_context = channel_context
         self.active_thread_id = 0
+        self._inspect_widget: InspectWidget | None = None
         self._register_channel_commands()
 
     def _register_channel_commands(self) -> None:
@@ -57,6 +60,42 @@ class ChannelTerminalApp(MetaApp):
 
         async def threads_handler(ctx, args: str):
             await app._show_thread_list()
+
+        async def inspect_handler(ctx, args: str):
+            parts = args.strip().split(maxsplit=1)
+            if not parts:
+                await ctx.logger.error("用法: /inspect [thread_id] <role_name>")
+                return
+            if len(parts) == 1:
+                thread_id = app.active_thread_id
+                role_name = parts[0]
+            else:
+                try:
+                    thread_id = int(parts[0])
+                except ValueError:
+                    thread_id = app.active_thread_id
+                    role_name = args.strip()
+                else:
+                    role_name = parts[1]
+            thread = app.channel_context.thread_map.get(thread_id)
+            if thread is None:
+                await ctx.logger.error(f"Thread {thread_id} 不存在")
+                return
+            activities = thread.role_activities.get(role_name, [])
+            await app._show_inspect_widget(thread_id, role_name, activities)
+
+        def inspect_completer(ctx, prefix: str) -> list[str]:
+            prefix_stripped = prefix.strip()
+            parts = prefix_stripped.split(maxsplit=1)
+            role_prefix = ""
+            if len(parts) >= 1:
+                if parts[0].isdigit():
+                    role_prefix = parts[1] if len(parts) > 1 else ""
+                else:
+                    role_prefix = prefix_stripped
+            return [
+                r.name for r in app.channel_context.roles if r.name.lower().startswith(role_prefix.lower())
+            ]
 
         self.context.register_command(
             MetaCommand(
@@ -88,6 +127,15 @@ class ChannelTerminalApp(MetaApp):
                 description="Open thread list to switch",
                 description_zh="打开 Thread 列表以切换",
                 handler=threads_handler,
+            )
+        )
+        self.context.register_command(
+            MetaCommand(
+                name="inspect",
+                description="Inspect role activities in a thread",
+                description_zh="查看线程中某个 Role 的动作记录",
+                handler=inspect_handler,
+                completer=inspect_completer,
             )
         )
 
@@ -244,6 +292,28 @@ class ChannelTerminalApp(MetaApp):
                 await super()._handle_context_event(SessionMessageEvent(message=event.message))
             return
 
+        if isinstance(event, RoleActivityEvent):
+            if self.active_thread_id == event.thread_id:
+                variant = {
+                    "error": "error",
+                    "tool_call": "status",
+                    "thinking": "status",
+                    "stream": "status",
+                    "status": "status",
+                }.get(event.activity_type, "status")
+                await self._mount_status(f"{event.content}", variant=variant)
+            if (
+                self._inspect_widget is not None
+                and self._inspect_widget.is_mounted
+                and self._inspect_widget.thread_id == event.thread_id
+                and self._inspect_widget.role_name == event.role_name
+            ):
+                from omg_cli.types.channel import RoleActivityRecord
+                self._inspect_widget.add_record(
+                    RoleActivityRecord(activity_type=event.activity_type, content=event.content)
+                )
+            return
+
         if isinstance(event, SessionMessageEvent):
             thread = self._get_thread(0)
             if thread is not None and event.message not in thread.messages:
@@ -259,27 +329,27 @@ class ChannelTerminalApp(MetaApp):
         await super()._handle_context_event(event)
 
     async def _switch_to_thread(self, thread_id: int) -> None:
-        await self.logger.info(f"[_switch_to_thread] start thread_id={thread_id}")
+        await self.logger.debug(f"[_switch_to_thread] start thread_id={thread_id}")
         self.active_thread_id = thread_id
         messages_view = self.query_one("#messages", MessageHistoryView)
         thread = self._get_thread(thread_id)
-        await self.logger.info(
+        await self.logger.debug(
             f"[_switch_to_thread] thread={thread}, messages_count={len(thread.messages) if thread else 0}"
         )
         if thread is not None:
-            await self.logger.info(f"[_switch_to_thread] calling load_messages with {len(thread.messages)} messages")
+            await self.logger.debug(f"[_switch_to_thread] calling load_messages with {len(thread.messages)} messages")
             await messages_view.load_messages(thread.messages)
-            await self.logger.info(
+            await self.logger.debug(
                 f"[_switch_to_thread] load_messages done, children_count={len(list(messages_view.children))}"
             )
         else:
-            await self.logger.info("[_switch_to_thread] no thread, removing children")
+            await self.logger.debug("[_switch_to_thread] no thread, removing children")
             await messages_view.remove_children()
         # Allow background Markdown renders to finish before final layout refresh
         await asyncio.sleep(0)
         messages_view.refresh(layout=True)
         messages_view.call_after_refresh(messages_view.scroll_end, animate=False)
-        await self.logger.info(
+        await self.logger.debug(
             f"[_switch_to_thread] done, messages_view region={messages_view.region}, size={messages_view.size}"
         )
         composer = self.query_one("#composer", ComposerTextArea)
@@ -287,3 +357,21 @@ class ChannelTerminalApp(MetaApp):
 
     def _get_thread(self, thread_id: int):
         return self.channel_context.thread_map.get(thread_id)
+
+
+    async def _show_inspect_widget(self, thread_id: int, role_name: str, activities: list[Any]) -> None:
+        await self._hide_inspect_widget()
+        await self._hide_chat()
+        chat_panel = self.query_one("#chat-panel", Vertical)
+        self._inspect_widget = InspectWidget(thread_id, role_name)
+        await chat_panel.mount(self._inspect_widget)
+        self._inspect_widget.load_records(activities)
+
+    async def _hide_inspect_widget(self) -> None:
+        if self._inspect_widget is not None and self._inspect_widget.is_mounted:
+            await self._inspect_widget.remove()
+        self._inspect_widget = None
+        await self._show_chat()
+
+    async def on_inspect_widget_dismissed(self, event: InspectWidget.Dismissed) -> None:
+        await self._hide_inspect_widget()

@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, DirectoryPath, Field
 
@@ -31,6 +31,12 @@ class Role(BaseModel):
         return get_adapter_manager().get_adapter(self.adapter_name)
 
 
+class RoleActivityRecord(BaseModel):
+    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
+    activity_type: Literal["thinking", "tool_call", "status", "error", "stream"]
+    content: str
+
+
 class Thread(BaseModel):
     id: int
     title: str
@@ -41,6 +47,7 @@ class Thread(BaseModel):
     status: ThreadStatus = ThreadStatus.DRAFT
     created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
     parent_thread_id: int | None = None
+    role_activities: dict[str, list[RoleActivityRecord]] = Field(default_factory=dict)
 
 
 class Channel(BaseModel):

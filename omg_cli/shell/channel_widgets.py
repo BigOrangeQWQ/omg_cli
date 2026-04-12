@@ -1,6 +1,6 @@
 import asyncio
 import re
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from textual.app import ComposeResult
 from textual.binding import BindingType
@@ -734,3 +734,62 @@ class ThreadListView(Vertical):
                         await self.action_select()
                         return
             target = target.parent
+
+
+class InspectWidget(Vertical):
+    """Real-time widget for inspecting role activities in a thread."""
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        ("escape", "dismiss", "Dismiss"),
+        ("ctrl+c", "dismiss", "Dismiss"),
+    ]
+
+    class Dismissed(Message):
+        pass
+
+    def __init__(self, thread_id: int, role_name: str) -> None:
+        super().__init__(classes="inspect-widget")
+        self.thread_id = thread_id
+        self.role_name = role_name
+        self._record_items: list[SafeStatic] = []
+
+    def compose(self) -> ComposeResult:
+        yield SafeStatic(
+            f"🔍 Inspect Thread #{self.thread_id} - {self.role_name}",
+            classes="inspect-title",
+        )
+        with Vertical(classes="inspect-records"):
+            pass
+
+    def on_mount(self) -> None:
+        self.focus()
+
+    def load_records(self, records: list[Any]) -> None:
+        container = self.query_one(".inspect-records", Vertical)
+        for record in records:
+            item = self._build_record_item(record)
+            container.mount(item)
+            self._record_items.append(item)
+        self._scroll_to_bottom()
+
+    def add_record(self, record: Any) -> None:
+        container = self.query_one(".inspect-records", Vertical)
+        item = self._build_record_item(record)
+        container.mount(item)
+        self._record_items.append(item)
+        self._scroll_to_bottom()
+
+    def _build_record_item(self, record: Any) -> SafeStatic:
+        ts = record.created_at.strftime("%H:%M:%S")
+        variant = record.activity_type
+        display = f"[{ts}] {variant}: {record.content}"
+        classes = f"inspect-record inspect-record--{variant}"
+        return SafeStatic(display, classes=classes)
+
+    def _scroll_to_bottom(self) -> None:
+        container = self.query_one(".inspect-records", Vertical)
+        container.scroll_end(animate=False)
+
+    async def action_dismiss(self) -> None:
+        self.post_message(self.Dismissed())
+        await self.remove()

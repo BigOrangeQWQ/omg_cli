@@ -93,3 +93,15 @@ class ThreadSpawnedEvent(BaseEvent):
     thread: "Thread"
     first_message: Message
     type: Literal["thread_spawned"] = "thread_spawned"
+
+
+class RoleActivityEvent(BaseEvent):
+    """Event emitted when a ThreadRoleContext performs an activity that should be
+    observable by the user without being persisted as a thread message.
+    """
+
+    thread_id: int
+    role_name: str
+    activity_type: Literal["thinking", "tool_call", "status", "error", "stream"]
+    content: str
+    type: Literal["role_activity"] = "role_activity"

@@ -4,7 +4,7 @@ from collections.abc import Sequence
 import contextvars
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -13,11 +13,14 @@ from omg_cli.context.chat import ChatContext
 from omg_cli.context.meta import MetaContext, tool_call_to_message
 from omg_cli.log import logger
 from omg_cli.prompts import render_plan_prompt, render_role_prompt
-from omg_cli.types.channel import Role, Thread, ThreadStatus
+from omg_cli.types.channel import Role, RoleActivityRecord, Thread, ThreadStatus
 from omg_cli.types.event import (
     BaseEvent,
+    RoleActivityEvent,
     SessionErrorEvent,
     SessionMessageEvent,
+    SessionStatusEvent,
+    StatusLevel,
     ThreadMessageEvent,
     ThreadSpawnedEvent,
 )
@@ -82,8 +85,42 @@ class ChannelContext:
 
         async def _forward_role_event(event: BaseEvent) -> None:
             thread_id = _current_thread_id.get(None)
-            if thread_id is not None and isinstance(event, SessionMessageEvent):
+            if thread_id is None:
+                return
+            if isinstance(event, SessionMessageEvent):
                 await self.default_context._emit(ThreadMessageEvent(thread_id=thread_id, message=event.message))
+            elif isinstance(event, SessionStatusEvent):
+                if event.level < StatusLevel.INFO:
+                    return
+                self.record_role_activity(
+                    thread_id=thread_id,
+                    role_name=role.name,
+                    activity_type="status",
+                    content=event.detail or "",
+                )
+                await self.default_context._emit(
+                    RoleActivityEvent(
+                        thread_id=thread_id,
+                        role_name=role.name,
+                        activity_type="status",
+                        content=event.detail or "",
+                    )
+                )
+            elif isinstance(event, SessionErrorEvent):
+                self.record_role_activity(
+                    thread_id=thread_id,
+                    role_name=role.name,
+                    activity_type="error",
+                    content=event.error,
+                )
+                await self.default_context._emit(
+                    RoleActivityEvent(
+                        thread_id=thread_id,
+                        role_name=role.name,
+                        activity_type="error",
+                        content=event.error,
+                    )
+                )
 
         ctx.register_event_handler(BaseEvent, _forward_role_event)
 
@@ -224,6 +261,9 @@ class ChannelContext:
         logger.info(f"Spawning new thread with title '{title}' and assigned roles {assigned_roles}")
         valid_role_names = {r.name for r in self.roles}
         filtered_roles = [r for r in assigned_roles if r in valid_role_names]
+        if not filtered_roles:
+            raise ToolError("At least one valid role must be assigned to the thread.")
+
         thread = self.add_thread(
             title,
             description=description,
@@ -242,7 +282,9 @@ class ChannelContext:
     def _generate_thread_first_message(self, thread: Thread) -> Message:
         """Generate the first message for a newly created thread."""
         TEMPLATE = f"""
-#{thread.id} {thread.title}
+# {thread.title}
+
+ID: #{thread.id}
 
 ## Description:
 {thread.description or "No description provided."}
@@ -383,6 +425,20 @@ After receiving the message, you **NEED** to cooperate with each other and divid
             return []
         return thread.messages[-limit:]
 
+    def record_role_activity(
+        self,
+        thread_id: int,
+        role_name: str,
+        activity_type: Literal["thinking", "tool_call", "status", "error", "stream"],
+        content: str,
+    ) -> None:
+        thread = self.thread_map.get(thread_id)
+        if thread is None:
+            return
+        thread.role_activities.setdefault(role_name, []).append(
+            RoleActivityRecord(activity_type=activity_type, content=content)
+        )
+
 
 class ThreadRoleContext(MetaContext):
     """Sub-agent runtime container that auto-approves tool calls.
@@ -414,9 +470,14 @@ class ThreadRoleContext(MetaContext):
             skills=skills,
         )
 
+    async def round(self, **kwargs) -> None:
+        await self.logger.info(f"🤖 {self.role.name} 开始处理...")
+        await super().round(**kwargs)
+        await self.logger.info(f"🤖 {self.role.name} 处理完成")
+
     async def _run_single_tool_call(self, tool_call: ToolCall) -> Message:
         tool_name = tool_call.function.name
-        await self.logger.debug(f"Tool call started: {tool_name}")
+        await self.logger.info(f"🔧 {self.role.name} 调用工具: {tool_name}")
 
         tool = self._tool_map.get(tool_name)
         if tool is None:
@@ -435,7 +496,10 @@ class ThreadRoleContext(MetaContext):
             await self._emit(SessionErrorEvent(error=error_message))
             return tool_call_to_message(tool_call, {"error": str(exc)})
 
-        await self.logger.debug(f"Tool call completed: {tool_name}")
+        result_summary = str(result)
+        if len(result_summary) > 80:
+            result_summary = result_summary[:77] + "..."
+        await self.logger.success(f"✅ {self.role.name} 工具完成: {tool_name} → {result_summary}")
         return tool_call_to_message(tool_call, result)
 
 
