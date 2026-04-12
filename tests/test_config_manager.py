@@ -104,3 +104,18 @@ GITHUB_TOKEN = "secret"
 
         raw = manager.config_file.read_text(encoding="utf-8")
         assert "url" not in raw
+
+
+class TestConfigPreservation:
+    def test_roles_preserve_other_config(self, manager: ConfigManager, temp_config_dir: Path) -> None:
+        from omg_cli.config.models import RoleConfig
+        from omg_cli.config.role import RoleManager
+
+        role_manager = RoleManager(config_dir=temp_config_dir)
+        manager.save_user_config(UserConfig(default_model="gpt-4"))
+        manager.add_mcp_server(MCPServerConfig(name="github", type="stdio", command="npx"))
+        role_manager.add_role_config(RoleConfig(name="coder", desc="", adapter_name="gpt-4"))
+
+        assert manager.load_user_config().default_model == "gpt-4"
+        assert len(manager.list_mcp_servers()) == 1
+        assert len(role_manager.list_roles_config()) == 1

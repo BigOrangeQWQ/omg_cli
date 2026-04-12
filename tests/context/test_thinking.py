@@ -4,6 +4,8 @@ from pydantic import BaseModel
 import pytest
 
 from omg_cli.abstract import ChatAdapter
+import omg_cli.config.manager as _manager_module
+from omg_cli.config.manager import ConfigManager
 from omg_cli.context import ChatContext
 from omg_cli.types.message import (
     Message,
@@ -65,6 +67,14 @@ class MockProvider(ChatAdapter):
 
     async def context_length(self):
         return 100000
+
+
+@pytest.fixture(autouse=True)
+def _mock_config_manager(monkeypatch, tmp_path):
+    """Redirect global ConfigManager to a temporary directory for all tests in this module."""
+    monkeypatch.setattr(
+        _manager_module, "_config_manager", ConfigManager(config_dir=tmp_path)
+    )
 
 
 def _make_context(provider: ChatAdapter) -> ChatContext:
