@@ -222,10 +222,50 @@ async def Grep(
     return output if output else "No matches found."
 
 
+@register_tool(tags=["system", "file"])
+async def Glob(
+    pattern: Annotated[str, Field(description="Glob pattern, e.g. '*.py', '**/*.toml'.")],
+    path: Annotated[
+        str | None,
+        Field(default=None, description="Search root directory. None means current working directory."),
+    ] = None,
+    recursive: Annotated[
+        bool,
+        Field(default=False, description="If True, recursively match subdirectories using rglob."),
+    ] = False,
+    limit: Annotated[
+        int,
+        Field(default=100, description="Maximum number of results to return."),
+    ] = 100,
+) -> str:
+    """Search for files matching a glob pattern."""
+    search_path = Path(path) if path else await Path.cwd()
+
+    if not search_path.is_absolute():
+        raise ToolError(f"`{path}` is not an absolute path. You must provide an absolute path to search.")
+
+    if recursive:
+        matches = [str(p) async for p in search_path.rglob(pattern)]
+    else:
+        matches = [str(p) async for p in search_path.glob(pattern)]
+
+    if not matches:
+        return "No matches found."
+
+    matches = sorted(matches)
+
+    if len(matches) > limit:
+        remaining = len(matches) - limit
+        return "\n".join(matches[:limit]) + f"\n... and {remaining} more"
+
+    return "\n".join(matches)
+
+
 TOOL_LIST = [
     Shell,
     ReadFile,
     WriteFile,
     StrReplace,
     Grep,
+    Glob,
 ]
