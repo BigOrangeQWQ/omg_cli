@@ -27,6 +27,7 @@ from omg_cli.types.event import (
 from omg_cli.types.message import Message, TextSegment, ToolCall
 from omg_cli.types.skill import SkillRef
 from omg_cli.types.tool import Tool, ToolError
+from omg_cli.utils import _format_arguments
 
 _current_thread_id: contextvars.ContextVar[int] = contextvars.ContextVar("_current_thread_id")
 
@@ -41,6 +42,40 @@ class SpawnThreadResult(BaseModel):
     thread_id: int
     title: str
     status: str
+
+
+class SendMessageResult(BaseModel):
+    success: bool
+
+
+class RecentMessage(BaseModel):
+    role: str
+    name: str | None
+    content: str
+
+
+class ActiveThread(BaseModel):
+    id: int
+    title: str
+    status: str
+    message_count: int
+    assigned_roles: list[str]
+
+
+class AvailableRole(BaseModel):
+    name: str
+    description: str
+
+
+class UpdateThreadStatusArguments(BaseModel):
+    thread_id: int
+    status: str
+
+
+class UpdateThreadStatusResult(BaseModel):
+    thread_id: int
+    status: str
+    success: bool
 
 
 class ChannelContext:
@@ -311,8 +346,16 @@ After receiving the message, you **NEED** to cooperate with each other and divid
     def _register_default_context_tools(self) -> None:
         self.default_context.register_tool(self.spawn_thread_tool)
 
-        async def _get_recent_messages(thread_id: int, limit: int = 10) -> list[Message]:
-            return self.get_recent_messages(thread_id, limit)
+        async def _get_recent_messages(thread_id: int, limit: int = 10) -> list[RecentMessage]:
+            messages = self.get_recent_messages(thread_id, limit)
+            return [
+                RecentMessage(
+                    role=msg.role,
+                    name=msg.name,
+                    content=" ".join(str(segment) for segment in msg.content),
+                )
+                for msg in messages
+            ]
 
         class GetRecentMessagesArguments(BaseModel):
             thread_id: int
@@ -326,20 +369,20 @@ After receiving the message, you **NEED** to cooperate with each other and divid
             ).bind(_get_recent_messages)
         )
 
-        async def _list_active_threads(limit: int = 10) -> list[dict[str, Any]]:
+        async def _list_active_threads(limit: int = 10) -> list[ActiveThread]:
             sorted_threads = sorted(
                 self.threads,
                 key=lambda t: (len(t.messages), t.id),
                 reverse=True,
             )[:limit]
             return [
-                {
-                    "id": t.id,
-                    "title": t.title,
-                    "status": t.status.value,
-                    "message_count": len(t.messages),
-                    "assigned_roles": t.assigned_role_names,
-                }
+                ActiveThread(
+                    id=t.id,
+                    title=t.title,
+                    status=t.status.value.strip(),
+                    message_count=len(t.messages),
+                    assigned_roles=t.assigned_role_names,
+                )
                 for t in sorted_threads
             ]
 
@@ -354,12 +397,12 @@ After receiving the message, you **NEED** to cooperate with each other and divid
             ).bind(_list_active_threads)
         )
 
-        async def _list_available_roles() -> list[dict[str, Any]]:
+        async def _list_available_roles() -> list[AvailableRole]:
             return [
-                {
-                    "name": r.name,
-                    "description": r.desc,
-                }
+                AvailableRole(
+                    name=r.name,
+                    description=r.desc,
+                )
                 for r in self.roles
             ]
 
@@ -486,7 +529,8 @@ class ThreadRoleContext(MetaContext):
 
     async def _run_single_tool_call(self, tool_call: ToolCall) -> Message:
         tool_name = tool_call.function.name
-        await self.logger.info(f"🔧 {self.role.name} 调用工具: {tool_name}")
+        args_str = _format_arguments(tool_call.function.arguments, max_lines=0)
+        await self.logger.info(f"🔧 {self.role.name} 调用工具: {tool_name} | 参数: {args_str}")
 
         tool = self._tool_map.get(tool_name)
         if tool is None:
@@ -505,10 +549,7 @@ class ThreadRoleContext(MetaContext):
             await self._emit(SessionErrorEvent(error=error_message))
             return tool_call_to_message(tool_call, {"error": str(exc)})
 
-        result_summary = str(result)
-        if len(result_summary) > 80:
-            result_summary = result_summary[:77] + "..."
-        await self.logger.success(f"✅ {self.role.name} 工具完成: {tool_name} → {result_summary}")
+        await self.logger.success(f"✅ {self.role.name} 工具完成: {tool_name}")
         return tool_call_to_message(tool_call, result)
 
 
