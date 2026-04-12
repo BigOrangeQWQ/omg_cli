@@ -124,8 +124,12 @@ class ChannelContext:
 
         ctx.register_event_handler(BaseEvent, _forward_role_event)
 
-        async def _send_message(thread_id: int, content: str) -> None:
-            await self.send_message(role_name=role.name, thread_id=thread_id, content=content)
+        async def _send_message(thread_id: int, content: str) -> bool:
+            try:
+                return await self.send_message(thread_id=thread_id, role_name=role.name, content=content)
+            except Exception as exc:
+                raise ToolError(f"Failed to send message: {exc}") from exc
+                return False
 
         class SendMessageArguments(BaseModel):
             thread_id: int
@@ -142,9 +146,16 @@ class ChannelContext:
             ).bind(_send_message)
         )
 
-        async def _get_recent_messages(thread_id: int, limit: int = 10) -> list[Message]:
+        async def _get_recent_messages(thread_id: int, limit: int = 10) -> list[dict[str, Any]]:
             messages = self.get_recent_messages(thread_id, limit)
-            return messages
+            return [
+                {
+                    "role": msg.role,
+                    "name": msg.name,
+                    "content": " ".join(str(segment) for segment in msg.content),
+                }
+                for msg in messages
+            ]
 
         class GetRecentMessagesArguments(BaseModel):
             thread_id: int
@@ -164,16 +175,36 @@ class ChannelContext:
     def _extract_mentions(content: str) -> list[str]:
         return re.findall(r"@(\w{1,14})\b", content)
 
-    async def send_message(self, role_name: str, thread_id: int, content: str) -> None:
+    def _dispatch_to_roles(self, thread_id: int, message: Message, role_names: list[str]) -> None:
+        """Spawn background tasks to dispatch a message to specific roles in a thread."""
+
+        async def _notify() -> None:
+            token = _current_thread_id.set(thread_id)
+            try:
+                async with TaskGroup() as tg:
+                    for role_name in role_names:
+                        ctx = self.thread_roles[thread_id].get(role_name)
+                        if ctx is None:
+                            logger.warning(
+                                f"Role '{role_name}' not found for thread {thread_id} in channel '{self.channel_name}'"
+                            )
+                            continue
+                        logger.debug(f"Dispatching message to role '{role_name}' in thread {thread_id}: {message}")
+                        tg.create_task(ctx.send(message))
+            finally:
+                _current_thread_id.reset(token)
+
+        self._spawn(_notify())
+
+    async def send_message(self, thread_id: int, role_name: str, content: str) -> bool:
+        """Publish a message from a role into a thread and dispatch to mentioned roles."""
         thread = self.thread_map.get(thread_id)
         if thread is None:
             raise ValueError(f"Thread with id {thread_id} not found in channel '{self.channel_name}'")
 
-        role = next((r for r in self.roles if r.name == role_name), None)
-        if role is None:
+        target_role = next((r for r in self.roles if r.name == role_name), None)
+        if target_role is None:
             raise ValueError(f"Role with name '{role_name}' not found in channel '{self.channel_name}'")
-
-        mentions = self._extract_mentions(content)
 
         message = Message(
             role="assistant",
@@ -181,20 +212,13 @@ class ChannelContext:
             content=[TextSegment(text=content)],
         )
 
-        async def _send_to_mentions():
-            token = _current_thread_id.set(thread_id)
-            try:
-                async with TaskGroup() as tg:
-                    for mention in mentions:
-                        ctx = self.thread_roles[thread_id].get(mention)
-                        if ctx is not None and mention != role_name:
-                            tg.create_task(ctx.send(message))
-            finally:
-                _current_thread_id.reset(token)
-
-        self._spawn(_send_to_mentions())
-
         thread.messages.append(message)
+        await self.default_context._emit(ThreadMessageEvent(thread_id=thread_id, message=message))
+
+        mentions = self._extract_mentions(content)
+        if mentions:
+            self._dispatch_to_roles(thread_id, message, [m for m in mentions if m != role_name])
+        return True
 
     def add_thread(
         self,
@@ -234,23 +258,7 @@ class ChannelContext:
         if not assigned_roles:
             return
 
-        async def _notify_role(role_name: str) -> None:
-            ctx = self.thread_roles[thread_id].get(role_name)
-            if ctx is None:
-                logger.warning(
-                    f"Assigned role '{role_name}' not found for thread {thread_id} in channel '{self.channel_name}'"
-                )
-                return
-            token = _current_thread_id.set(thread_id)
-            try:
-                logger.debug(f"Dispatching message to role '{role_name}' in thread {thread_id}: {message}")
-                await ctx.send(message)
-            finally:
-                _current_thread_id.reset(token)
-
-        for role_name in assigned_roles:
-            logger.debug(f"Scheduling dispatch of message to role '{role_name}' in thread {thread_id}")
-            self._spawn(_notify_role(role_name))
+        self._dispatch_to_roles(thread_id, message, assigned_roles)
 
     async def spawn_thread(
         self,
@@ -282,7 +290,7 @@ class ChannelContext:
     def _generate_thread_first_message(self, thread: Thread) -> Message:
         """Generate the first message for a newly created thread."""
         TEMPLATE = f"""
-# {thread.title}
+# #{thread.id} {thread.title}
 
 ID: #{thread.id}
 
@@ -295,7 +303,8 @@ ID: #{thread.id}
 After receiving the message, you **NEED** to cooperate with each other and divide the work.
 """
         return Message(
-            role="user",
+            role="assistant",
+            name="system",
             content=[TextSegment(text=TEMPLATE.strip())],
         )
 
