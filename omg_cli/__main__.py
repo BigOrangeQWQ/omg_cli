@@ -78,15 +78,26 @@ def main():
         logger.info("未配置任何模型，请先使用 /import 命令导入模型")
         adapter = NoneAdapter()
 
-    # Create chat context
-    context = ChatContext(
-        provider=adapter,
-        system_prompt=render_system_prompt(Path.cwd()),
-    )
+    if args.channel:
+        from omg_cli.context.role import ChannelContext
+
+        context = ChannelContext(
+            channel_name=str(Path.cwd()),
+            provider=adapter,
+            system_prompt=render_system_prompt(Path.cwd()),
+        )
+    else:
+        context = ChatContext(
+            provider=adapter,
+            system_prompt=render_system_prompt(Path.cwd()),
+        )
 
     # Restore previous session if session ID is provided
     if args.session_id:
-        if not context.load_session(args.session_id):
+        from omg_cli.context.role import ChannelContext
+
+        chat_ctx = context.default_context if isinstance(context, ChannelContext) else context
+        if not chat_ctx.load_session(args.session_id):
             logger.error(f"错误: 未找到会话 '{args.session_id}'")
             sys.exit(1)
         logger.info(f"已恢复会话: {args.session_id}")
