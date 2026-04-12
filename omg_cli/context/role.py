@@ -4,7 +4,7 @@ from collections.abc import Sequence
 import contextvars
 from pathlib import Path
 import re
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -13,7 +13,7 @@ from omg_cli.context.chat import ChatContext
 from omg_cli.context.meta import MetaContext, tool_call_to_message
 from omg_cli.log import logger
 from omg_cli.prompts import render_plan_prompt, render_role_prompt, render_role_round_reminder_prompt
-from omg_cli.types.channel import Role, RoleActivityRecord, Thread, ThreadStatus
+from omg_cli.types.channel import Role, RoleActivityRecord, RoleActivityType, Thread, ThreadStatus
 from omg_cli.types.event import (
     BaseEvent,
     RoleActivityEvent,
@@ -121,7 +121,39 @@ class ChannelContext:
             if thread_id is None:
                 return
             if isinstance(event, SessionMessageEvent):
-                await self.default_context._emit(ThreadMessageEvent(thread_id=thread_id, message=event.message))
+                # Only send_message should produce ThreadMessageEvent.
+                # All other role outputs are observed via RoleActivityEvent / inspect.
+                if event.message.text:
+                    self.record_role_activity(
+                        thread_id=thread_id,
+                        role_name=role.name,
+                        activity_type="message",
+                        content=event.message.text,
+                    )
+                    await self.default_context._emit(
+                        RoleActivityEvent(
+                            thread_id=thread_id,
+                            role_name=role.name,
+                            activity_type="message",
+                            content=event.message.text,
+                        )
+                    )
+                if event.message.thinking:
+                    self.record_role_activity(
+                        thread_id=thread_id,
+                        role_name=role.name,
+                        activity_type="thinking",
+                        content=event.message.thinking,
+                    )
+                    await self.default_context._emit(
+                        RoleActivityEvent(
+                            thread_id=thread_id,
+                            role_name=role.name,
+                            activity_type="thinking",
+                            content=event.message.thinking,
+                        )
+                    )
+                return
             elif isinstance(event, SessionStatusEvent):
                 if event.level < StatusLevel.INFO:
                     return
@@ -562,7 +594,7 @@ After receiving the message, you **NEED** to cooperate with each other and divid
         self,
         thread_id: int,
         role_name: str,
-        activity_type: Literal["thinking", "tool_call", "status", "error", "stream"],
+        activity_type: RoleActivityType,
         content: str,
     ) -> None:
         thread = self.thread_map.get(thread_id)
