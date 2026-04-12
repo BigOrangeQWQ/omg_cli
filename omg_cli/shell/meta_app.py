@@ -4,11 +4,9 @@ from typing import ClassVar
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widget import Widget
 
 from omg_cli.config import get_config_manager
 from omg_cli.context import ChatContext
-from omg_cli.context.role import ChannelContext
 from omg_cli.context.tool_manager import ToolConfirmationDecision
 from omg_cli.log import logger
 from omg_cli.types.event import (
@@ -34,8 +32,6 @@ from omg_cli.types.message import (
 )
 from omg_cli.types.tool import Tool
 
-from .command_definitions import register_commands
-from .import_wizard import ImportWizard
 from .styles import CSS
 from .utils import _format_arguments
 from .widgets import (
@@ -44,7 +40,6 @@ from .widgets import (
     ComposerTextArea,
     ContextFooter,
     MessageHistoryView,
-    MessageRow,
     PendingMessagesDisplay,
     PreviewRow,
     StatusWidget,
@@ -53,7 +48,7 @@ from .widgets import (
 )
 
 
-class ChatTerminalApp(App):
+class MetaApp(App):
     CSS = CSS
     ENABLE_COMMAND_PALETTE = False
 
@@ -73,7 +68,6 @@ class ChatTerminalApp(App):
         self._ctrl_c_count: int = 0
         self._pending_rejection_future: asyncio.Future[str] | None = None
         self.context.set_tool_confirmation_handler(self._confirm_tool_call)
-        register_commands(self.context)
         self._register_import_command()
 
     @property
@@ -100,13 +94,36 @@ class ChatTerminalApp(App):
         self.context.register_event_handler(SessionStreamDeltaEvent, self._handle_stream_event)
         self.context.register_event_handler(SessionStreamCompletedEvent, self._handle_stream_event)
 
-        await self.logger.info(f"Session ID: {self.context.session_id}")
         for message in self.context.messages:
             await self._mount_message(message)
 
         self._sync_composer_height()
         self._focus_composer()
-        await self.check_and_show_import_wizard()
+
+    async def on_ready(self) -> None:
+        self._sync_composer_height()
+
+    def on_key(self, event) -> None:
+        if event.key in ("ctrl+c", "ctrl+d"):
+            # When modal widgets are open, intercept these keys so App bindings work
+            modal_widgets = list(
+                self.query("RoleWizard, ImportWizard, ThreadListView, ThreadPlanningWidget, RoleSelectorDialog")
+            )
+            if modal_widgets:
+                # Allow ThreadListView to handle ctrl+c as dismiss
+                if event.key == "ctrl+c" and any(
+                    w.__class__.__name__ == "ThreadListView" for w in modal_widgets
+                ):
+                    return
+                event.stop()
+                if event.key == "ctrl+c":
+                    self.run_worker(self.action_interrupt(), exclusive=True)
+                else:
+                    self.run_worker(self.action_quit(), exclusive=True)
+
+    async def on_unmount(self) -> None:
+        session_id = self.context.session_id
+        print(f"\n下次可以通过 omg-cli -r {session_id} 恢复本次会话")
 
     def _register_import_command(self) -> None:
         from omg_cli.types.command import MetaCommand
@@ -142,6 +159,8 @@ class ChatTerminalApp(App):
         messages.styles.display = "none"
 
         container = self.query_one("#approval-container", Vertical)
+        from .import_wizard import ImportWizard
+
         wizard = ImportWizard()
         await container.mount(wizard)
         self.call_after_refresh(wizard.focus)
@@ -163,13 +182,6 @@ class ChatTerminalApp(App):
         success = await self.context.switch_model(model_config.name)
         if success:
             await self._update_context_display()
-
-    async def on_ready(self) -> None:
-        self._sync_composer_height()
-
-    async def on_unmount(self) -> None:
-        session_id = self.context.session_id
-        print(f"\n下次可以通过 omg-cli -r {session_id} 恢复本次会话")
         self.context.set_tool_confirmation_handler(None)
         await self.context.disconnect_all_mcp_servers()
 
@@ -221,6 +233,10 @@ class ChatTerminalApp(App):
             return
 
         logger.debug(f"User input submitted: {text[:80]!r}")
+        await self._on_user_message_submitted(text)
+
+    async def _on_user_message_submitted(self, text: str) -> None:
+        composer = self.query_one(ComposerTextArea)
         composer.load_text("")
         self._sync_composer_height()
         self.run_worker(self._submit_text(text), thread=False, exclusive=True)
@@ -375,14 +391,8 @@ class ChatTerminalApp(App):
         self.query_one("#messages", VerticalScroll).scroll_end(animate=False)
 
     async def _mount_message(self, message: Message) -> None:
-        messages_view = self.query_one("#messages", VerticalScroll)
-        row = MessageRow(message)
-        await messages_view.mount(row)
-        row.refresh(layout=True)
-        for child in row.walk_children():
-            if isinstance(child, Widget):
-                child.refresh(layout=True)
-        messages_view.scroll_end(animate=False)
+        messages_view = self.query_one("#messages", MessageHistoryView)
+        await messages_view.mount_message(message)
 
     async def _mount_status(self, text: str, *, variant: str = "status") -> None:
         messages_view = self.query_one("#messages", VerticalScroll)
@@ -508,12 +518,3 @@ class ChatTerminalApp(App):
             await self.logger.info(f"Tool call rejected: {tool.name}, reason: {decision.reason}")
 
         return decision
-
-
-def run_terminal(context: ChatContext | ChannelContext, *, channel: bool = False) -> None:
-    from .channel_app import ChannelTerminalApp
-
-    if isinstance(context, ChannelContext):
-        ChannelTerminalApp(context).run()
-    else:
-        ChatTerminalApp(context).run()

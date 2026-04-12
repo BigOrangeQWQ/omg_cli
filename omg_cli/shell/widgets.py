@@ -144,6 +144,21 @@ class ContextStatusWidget(Static):
         self.update(f"context: {usage_pct:.1f}%({context_k:.1f}k/{max_k:.1f}k)")
 
 
+class ChannelStatusWidget(SafeStatic):
+    """Widget to display current Channel default role in the footer."""
+
+    def __init__(self, role_name: str = "") -> None:
+        super().__init__("", classes="channel-status")
+        self.update_status(role_name)
+
+    def update_status(self, role_name: str) -> None:
+        if role_name:
+            self.update(f"channel: {role_name}")
+        else:
+            self.styles.display = "none"
+            self.update("")
+
+
 class ContextFooter(Footer):
     """Custom footer with context usage display on the right."""
 
@@ -169,6 +184,7 @@ class ContextFooter(Footer):
             compact=compact,
         )
         self._context_widget: ContextStatusWidget | None = None
+        self._channel_widget: ChannelStatusWidget | None = None
         self._last_context_tokens: int = 0
         self._last_max_context_size: int = 100000
 
@@ -176,6 +192,8 @@ class ContextFooter(Footer):
         """Compose the footer with context status."""
         with Horizontal(classes="footer-content"):
             yield from super().compose()
+        self._channel_widget = ChannelStatusWidget()
+        yield self._channel_widget
         self._context_widget = ContextStatusWidget(
             self._last_context_tokens,
             self._last_max_context_size,
@@ -194,6 +212,16 @@ class ContextFooter(Footer):
                 pass
         if self._context_widget is not None:
             self._context_widget.update_display(context_tokens, max_context_size)
+
+    def update_channel_status(self, role_name: str) -> None:
+        """Update the channel status display."""
+        if self._channel_widget is None or not self._channel_widget.is_mounted:
+            try:
+                self._channel_widget = self.query_one(ChannelStatusWidget)
+            except Exception:
+                pass
+        if self._channel_widget is not None:
+            self._channel_widget.update_status(role_name)
 
 
 class CommandPalette(ListView, FileCompletionMixin):
@@ -931,6 +959,28 @@ class MessageHistoryView(VerticalScroll):
             event.stop()
             event.prevent_default()
 
+    async def mount_message(self, message: Message) -> None:
+        row = MessageRow(message)
+        await self.mount(row)
+        row.refresh(layout=True)
+        for child in row.walk_children():
+            if isinstance(child, Widget):
+                child.refresh(layout=True)
+        self.scroll_end(animate=False)
+
+    async def load_messages(self, messages: list[Message]) -> None:
+        await self.remove_children()
+        self.scroll_home(animate=False)
+        for message in messages:
+            row = MessageRow(message)
+            await self.mount(row)
+            row.refresh(layout=True)
+            for child in row.walk_children():
+                if isinstance(child, Widget):
+                    child.refresh(layout=True)
+        self.refresh(layout=True)
+        self.call_after_refresh(self.scroll_end, animate=False)
+
 
 # =============================================================================
 # Pending Messages Queue Display
@@ -949,10 +999,10 @@ class PendingMessagesDisplay(Vertical):
         self._content_container = Vertical(classes="pending-messages-content")
         yield self._content_container
 
-    def update_messages(self, messages: list[str]) -> None:
+    async def update_messages(self, messages: list[str]) -> None:
         """Update the displayed messages."""
         # Clear existing content
-        self._content_container.remove_children()
+        await self._content_container.remove_children()
         self._message_widgets.clear()
 
         if not messages:
@@ -989,11 +1039,6 @@ class ApprovalDialog(Vertical):
             ToolConfirmationDecision(approved=True, session_approved=True),
         ),
         ("Skip", "no", ToolConfirmationDecision(approved=False)),
-        (
-            "Reject with custom reason...",
-            "custom_reason",
-            None,
-        ),
     ]
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -1037,10 +1082,10 @@ class ApprovalDialog(Vertical):
         """Wait for the user to make a decision."""
         return await self._future
 
-    def _resolve(self, decision: ToolConfirmationDecision | None) -> None:
+    async def _resolve(self, decision: ToolConfirmationDecision | None) -> None:
         if not self._future.done():
             self._future.set_result(decision)
-        self.remove()
+        await self.remove()
 
     def action_select_next(self) -> None:
         if self.selected_index < len(self.OPTIONS) - 1:
@@ -1051,34 +1096,34 @@ class ApprovalDialog(Vertical):
         self.selected_index = (self.selected_index - 1) % len(self.OPTIONS)
         self._update_display()
 
-    def action_confirm(self) -> None:
-        self._confirm()
+    async def action_confirm(self) -> None:
+        await self._confirm()
 
-    def action_select_yes(self) -> None:
+    async def action_select_yes(self) -> None:
         self.selected_index = 0
-        self._confirm()
+        await self._confirm()
 
-    def action_select_session(self) -> None:
+    async def action_select_session(self) -> None:
         self.selected_index = 1
-        self._confirm()
+        await self._confirm()
 
-    def action_select_no(self) -> None:
+    async def action_select_no(self) -> None:
         self.selected_index = 2
-        self._confirm()
+        await self._confirm()
 
     def action_custom_reason(self) -> None:
         composer = self.app.query_one("#composer", ComposerTextArea)
         composer.focus()
 
-    def on_click(self, event) -> None:
+    async def on_click(self, event) -> None:
         for i, widget in enumerate(self.option_widgets):
             if widget == event.control:
                 self.selected_index = i
-                self._confirm()
+                await self._confirm()
                 return
 
-    def _confirm(self) -> None:
+    async def _confirm(self) -> None:
         option = self.OPTIONS[self.selected_index]
         decision = option[2]
         logger.debug(f"Tool approval decision for {self.tool_name}: {option[1]}")
-        self._resolve(decision)
+        await self._resolve(decision)

@@ -1,6 +1,120 @@
-"""Channel mode styles: thread sidebar, thread planning, mention palette."""
+"""Channel mode styles: thread create, thread list, thread planning, mention palette."""
 
 CHANNEL_CSS = """
+/* Thread Create Widget */
+.thread-create-widget {
+    width: 1fr;
+    height: auto;
+    border: solid $primary-darken-2;
+    background: $surface-darken-1;
+    padding: 1;
+    margin: 0 1 1 1;
+}
+
+.thread-create-widget Input {
+    margin: 0 0 1 0;
+}
+
+.thread-create-widget TextArea {
+    height: 8;
+    margin: 0 0 1 0;
+}
+
+/* Thread List View */
+.thread-list-view {
+    width: 1fr;
+    height: 1fr;
+    border: solid $primary-darken-2;
+    background: $surface-darken-1;
+    padding: 1;
+}
+
+.thread-list-title {
+    text-style: bold;
+    color: $primary;
+    height: 1;
+    text-align: center;
+    margin: 0 0 1 0;
+}
+
+.thread-list-items {
+    width: 100%;
+    height: 1fr;
+    overflow-y: auto;
+}
+
+.thread-list-empty {
+    width: 100%;
+    height: 1fr;
+    text-align: center;
+    color: $text-muted;
+    content-align: center middle;
+}
+
+.thread-list-header {
+    width: 100%;
+    height: 1;
+    color: $text-muted;
+    text-style: bold;
+    margin: 1 0 0 0;
+}
+
+.thread-list-item {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    color: $text;
+}
+
+.thread-list-item:hover {
+    background: $primary 20%;
+}
+
+.thread-list-item--selected {
+    background: $primary 30%;
+    text-style: bold;
+}
+
+.thread-list-item--selected .thread-list-item-meta {
+    color: $text;
+}
+
+.thread-list-item--running {
+    color: $success;
+}
+
+.thread-list-item--draft {
+    color: $warning;
+}
+
+.thread-list-item--review {
+    color: $primary;
+}
+
+.thread-list-item--done {
+    color: $text-muted;
+}
+
+.thread-list-item--error {
+    color: $error;
+}
+
+.thread-list-item-icon {
+    width: 2;
+    content-align: center middle;
+}
+
+.thread-list-item-title {
+    width: 1fr;
+    text-style: bold underline;
+    padding: 0 1;
+}
+
+.thread-list-item-meta {
+    width: auto;
+    color: $text-muted;
+}
+
 /* Thread Planning Widget */
 .thread-planning-widget {
     width: 1fr;
@@ -126,50 +240,5 @@ CHANNEL_CSS = """
     color: $primary;
     text-style: bold;
     padding: 0 1;
-}
-
-/* Thread Sidebar */
-.thread-sidebar {
-    width: 25;
-    min-width: 20;
-    height: 1fr;
-    border-right: solid $panel;
-    background: $surface-darken-1;
-    padding: 1 0;
-    display: none;
-}
-
-.thread-sidebar.visible {
-    display: block;
-}
-
-.thread-sidebar-title {
-    text-style: bold;
-    color: $primary;
-    text-align: center;
-    height: 1;
-    margin: 0 0 1 0;
-}
-
-.thread-sidebar-list {
-    width: 100%;
-    height: auto;
-}
-
-.thread-item {
-    width: 100%;
-    height: 1;
-    padding: 0 1;
-    color: $text;
-    text-align: left;
-}
-
-.thread-item:hover {
-    background: $primary 20%;
-}
-
-.thread-item--active {
-    background: $primary 30%;
-    text-style: bold;
 }
 """
