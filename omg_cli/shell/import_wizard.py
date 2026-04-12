@@ -92,7 +92,13 @@ class ImportWizard(Vertical):
         self.page2_widgets: list[Widget] = []
         self.model_option_widgets: list[SafeStatic] = []
         self._current_models: list[str] = []  # Store models for filtering
-        self._page2_inputs = ["p2-input-baseurl", "p2-input-apikey", "p2-input-model", "p2-input-custom"]
+        self._page2_inputs = [
+            "p2-input-baseurl",
+            "p2-input-apikey",
+            "p2-input-model",
+            "p2-input-maxcontext",
+            "p2-input-custom",
+        ]
 
     def compose(self) -> ComposeResult:
         # ===== Shared Title (always visible) =====
@@ -126,6 +132,11 @@ class ImportWizard(Vertical):
             yield SafeStatic("可用模型 (↑↓选择, Enter确认):", classes="wizard-label-small", id="p2-model-list-label")
             for i in range(8):  # Max 8 options
                 yield SafeStatic("", classes="wizard-option", id=f"p2-model-opt-{i}")
+
+            # Max Context row
+            yield SafeStatic("Max Context (tokens):", classes="wizard-label-small")
+            with Horizontal(classes="wizard-input-row"):
+                yield Input(value="150000", id="p2-input-maxcontext")
 
             # Custom Name row
             yield SafeStatic("自定义名称 (可选):", classes="wizard-label-small")
@@ -161,6 +172,7 @@ class ImportWizard(Vertical):
                 self.query_one("#p2-input-apikey", Input),
                 self.query_one("#p2-input-model", Input),
                 self.query_one("#p2-model-list-label", SafeStatic),
+                self.query_one("#p2-input-maxcontext", Input),
                 self.query_one("#p2-input-custom", Input),
                 self.query_one("#p2-hint-thinking", SafeStatic),
                 self.query_one("#p2-error", SafeStatic),
@@ -252,7 +264,7 @@ class ImportWizard(Vertical):
             current_idx = self._page2_inputs.index(focused.id)
             next_idx = (current_idx + 1) % len(self._page2_inputs)
             self.query_one(f"#{self._page2_inputs[next_idx]}", Input).focus()
-        except ValueError, IndexError:
+        except (ValueError, IndexError):
             self.query_one("#p2-input-baseurl", Input).focus()
 
     def _focus_prev_input(self) -> None:
@@ -265,7 +277,7 @@ class ImportWizard(Vertical):
             current_idx = self._page2_inputs.index(focused.id)
             prev_idx = (current_idx - 1) % len(self._page2_inputs)
             self.query_one(f"#{self._page2_inputs[prev_idx]}", Input).focus()
-        except ValueError, IndexError:
+        except (ValueError, IndexError):
             self.query_one("#p2-input-baseurl", Input).focus()
 
     def _next_model_option(self) -> None:
@@ -329,7 +341,7 @@ class ImportWizard(Vertical):
                     self.selected_index = idx
                     self._update_options()
                     self._go_to_page2()
-                except ValueError, IndexError:
+                except (ValueError, IndexError):
                     pass
             return
 
@@ -349,7 +361,7 @@ class ImportWizard(Vertical):
                     try:
                         idx = int(target_id.split("-")[-1])
                         self._select_model_by_index(idx)
-                    except ValueError, IndexError:
+                    except (ValueError, IndexError):
                         pass
                 return
 
@@ -562,11 +574,13 @@ class ImportWizard(Vertical):
         baseurl_input = self.query_one("#p2-input-baseurl", Input)
         model_input = self.query_one("#p2-input-model", Input)
         apikey_input = self.query_one("#p2-input-apikey", Input)
+        maxcontext_input = self.query_one("#p2-input-maxcontext", Input)
         customname_input = self.query_one("#p2-input-custom", Input)
 
         base_url = baseurl_input.value.strip()
         model = model_input.value.strip()
         api_key = apikey_input.value.strip()
+        max_context_str = maxcontext_input.value.strip()
         custom_name = customname_input.value.strip()
 
         # Validate
@@ -584,6 +598,18 @@ class ImportWizard(Vertical):
             return
         if not self.provider:
             self._show_error("⚠ 内部错误: 未选择提供商")
+            return
+
+        # Validate max_context
+        try:
+            max_context = int(max_context_str)
+        except ValueError:
+            self._show_error("⚠ Max Context 必须是正整数")
+            maxcontext_input.focus()
+            return
+        if max_context <= 0:
+            self._show_error("⚠ Max Context 必须是正整数")
+            maxcontext_input.focus()
             return
 
         self._clear_error()
@@ -618,6 +644,7 @@ class ImportWizard(Vertical):
             base_url=base_url,
             api_key=SecretStr(api_key),
             thinking_supported=thinking_supported,
+            max_context=max_context,
         )
         config_manager.add_model(model_config)
 

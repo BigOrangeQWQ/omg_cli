@@ -20,6 +20,7 @@ class ChatAdapter(abc.ABC):
         model: str,
         base_url: str,
         stream: bool = True,
+        max_input_tokens: int | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__()
@@ -27,6 +28,7 @@ class ChatAdapter(abc.ABC):
         self.model = model
         self.base_url = base_url
         self.stream_enabled = stream
+        self.max_input_tokens = max_input_tokens
 
     @property
     @abc.abstractmethod

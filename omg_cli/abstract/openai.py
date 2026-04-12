@@ -79,8 +79,10 @@ class OpenAIAPI(ChatAdapter):
         model: str,
         base_url: str = "https://api.openai.com/v1",
         stream: bool = False,
+        max_input_tokens: int | None = None,
+        **kwargs: Any,
     ) -> None:
-        super().__init__(api_key, model, base_url, stream)
+        super().__init__(api_key, model, base_url, stream, max_input_tokens=max_input_tokens, **kwargs)
         self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
 
     @property
@@ -104,6 +106,8 @@ class OpenAIAPI(ChatAdapter):
         Uses a mapping table since OpenAI's API doesn't expose max_context_length.
         Returns 150000 (150K) for unknown models (Response API has higher limits).
         """
+        if self.max_input_tokens:
+            return self.max_input_tokens
         return 150000
 
     def _get_segment_index(

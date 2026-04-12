@@ -94,6 +94,8 @@ class AnthropicAPI(ChatAdapter):
         Uses a mapping table since Anthropic's API doesn't expose max_context_length.
         Default to 150k tokens if model is unknown or API call fails.
         """
+        if self.max_input_tokens:
+            return self.max_input_tokens
         try:
             model = await self.client.models.retrieve(self.model)
             return model.max_input_tokens or 150000

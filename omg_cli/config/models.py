@@ -24,6 +24,7 @@ class ModelConfig(BaseModel):
     base_url: str
     api_key: SecretStr = Field(description="API key (protected by filesystem permissions)")
     thinking_supported: bool = False
+    max_context: int | None = None
     skills: list[str] = Field(default_factory=list, description="Anthropic skill IDs to enable by default")
 
     def get_api_key(self) -> str:
@@ -39,6 +40,7 @@ class ModelConfig(BaseModel):
                     api_key=api_key,
                     model=self.model,
                     base_url=self.base_url,
+                    max_input_tokens=self.max_context,
                 )
             case "anthropic":
                 return AnthropicAPI(
@@ -47,18 +49,21 @@ class ModelConfig(BaseModel):
                     base_url=self.base_url,
                     thinking_supported=self.thinking_supported,
                     skills=self.skills,
+                    max_input_tokens=self.max_context,
                 )
             case "deepseek":
                 return DeepSeekAPI(
                     api_key=api_key,
                     model=self.model,
                     base_url=self.base_url,
+                    max_input_tokens=self.max_context,
                 )
             case "openai_legacy":
                 return OpenAILegacy(
                     api_key=api_key,
                     model=self.model,
                     base_url=self.base_url,
+                    max_input_tokens=self.max_context,
                 )
             case _:
                 # Default to OpenAI compatible
@@ -66,6 +71,7 @@ class ModelConfig(BaseModel):
                     api_key=api_key,
                     model=self.model,
                     base_url=self.base_url,
+                    max_input_tokens=self.max_context,
                 )
 
     def to_storage_dict(self) -> dict[str, Any]:
@@ -78,7 +84,8 @@ class ModelConfig(BaseModel):
         # SecretStr is serialized as plaintext for storage
         # The file permissions (0o600) provide the actual protection
         data["api_key"] = self.get_api_key()
-        return data
+        # Filter out None values for TOML compatibility
+        return {k: v for k, v in data.items() if v is not None}
 
     @classmethod
     def from_storage_dict(cls, data: dict[str, Any]) -> "ModelConfig":

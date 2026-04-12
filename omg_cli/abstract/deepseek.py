@@ -57,8 +57,10 @@ class DeepSeekAPI(OpenAILegacy):
         model: str,
         base_url: str = "https://api.openai.com/v1",
         stream: bool = False,
+        max_input_tokens: int | None = None,
+        **kwargs: Any,
     ) -> None:
-        super().__init__(api_key, model, base_url, stream)
+        super().__init__(api_key, model, base_url, stream, max_input_tokens=max_input_tokens, **kwargs)
         self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
         # 这个变量用于储存正在生成的思考内容
         # 若 thinking_content 不为空，则表示相同前缀的 reasoning content应该被包含在 message 中，而非排除在外
