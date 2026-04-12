@@ -63,6 +63,12 @@ class EventManager[E]:
             if inspect.isawaitable(result):
                 await result
 
+    def copy_handlers_from(self, other: "EventManager[E]") -> None:
+        """Copy all handlers from another event manager into this one."""
+        for event_type, handlers in other._handlers.items():
+            for handler in handlers:
+                self.register(event_type, handler)
+
     def clear(self) -> None:
         """Clear all registered handlers."""
         self._handlers.clear()
