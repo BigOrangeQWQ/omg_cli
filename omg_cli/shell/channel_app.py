@@ -94,9 +94,7 @@ class ChannelTerminalApp(MetaApp):
                     role_prefix = parts[1] if len(parts) > 1 else ""
                 else:
                     role_prefix = prefix_stripped
-            return [
-                r.name for r in app.channel_context.roles if r.name.lower().startswith(role_prefix.lower())
-            ]
+            return [r.name for r in app.channel_context.roles if r.name.lower().startswith(role_prefix.lower())]
 
         self.context.register_command(
             MetaCommand(
@@ -270,8 +268,7 @@ class ChannelTerminalApp(MetaApp):
             self.channel_context.threads.append(event.thread)
             self.channel_context.thread_map[event.thread.id] = event.thread
             self.channel_context.thread_roles[event.thread.id] = {
-                r.name: self.channel_context.role_contexts[r.name]
-                for r in self.channel_context.roles
+                r.name: self.channel_context.role_contexts[r.name] for r in self.channel_context.roles
             }
         for list_view in self.query(ThreadListView):
             list_view.update_threads(list(self.channel_context.threads))
@@ -308,15 +305,6 @@ class ChannelTerminalApp(MetaApp):
             return
 
         if isinstance(event, RoleActivityEvent):
-            if self.active_thread_id == event.thread_id:
-                variant = {
-                    "error": "error",
-                    "tool_call": "status",
-                    "thinking": "status",
-                    "stream": "status",
-                    "status": "status",
-                }.get(event.activity_type, "status")
-                await self._mount_status(f"{event.content}", variant=variant)
             if (
                 self._inspect_widget is not None
                 and self._inspect_widget.is_mounted
@@ -324,6 +312,7 @@ class ChannelTerminalApp(MetaApp):
                 and self._inspect_widget.role_name == event.role_name
             ):
                 from omg_cli.types.channel import RoleActivityRecord
+
                 self._inspect_widget.add_record(
                     RoleActivityRecord(activity_type=event.activity_type, content=event.content)
                 )
@@ -368,7 +357,7 @@ class ChannelTerminalApp(MetaApp):
             await self.logger.debug("[_switch_to_thread] no thread, removing children")
             await messages_view.remove_children()
         # Allow background Markdown renders to finish before final layout refresh
-        await asyncio.sleep(0)
+
         messages_view.refresh(layout=True)
         messages_view.call_after_refresh(messages_view.scroll_end, animate=False)
         await self.logger.debug(
@@ -379,7 +368,6 @@ class ChannelTerminalApp(MetaApp):
 
     def _get_thread(self, thread_id: int):
         return self.channel_context.thread_map.get(thread_id)
-
 
     async def _show_inspect_widget(self, thread_id: int, role_name: str, activities: list[Any]) -> None:
         await self._hide_inspect_widget()

@@ -1,7 +1,7 @@
 """Metadata types for context storage."""
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -22,6 +22,9 @@ class SessionMetadata(BaseModel):
 
     # Session title or description
     title: str | None = None
+
+    # Session type: "chat" or "channel"
+    session_type: Literal["chat", "channel"] = "chat"
 
     # Session configuration (model settings, system prompt, etc.)
     config: dict[str, Any] = Field(default_factory=dict)

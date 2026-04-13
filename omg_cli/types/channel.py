@@ -19,6 +19,9 @@ class ThreadStatus(StrEnum):
     STALLED = "stalled"
 
 
+RoleActivityType = Literal["thinking", "tool_call", "status", "error", "stream", "message"]
+
+
 class Role(BaseModel):
     name: str
     desc: str
@@ -34,7 +37,7 @@ class Role(BaseModel):
 
 class RoleActivityRecord(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
-    activity_type: Literal["thinking", "tool_call", "status", "error", "stream"]
+    activity_type: RoleActivityType
     content: str
 
 

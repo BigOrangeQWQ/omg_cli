@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from omg_cli.types.channel import Thread
+from omg_cli.types.channel import RoleActivityType, Thread
 from omg_cli.types.message import (
     Message,
     MessageStreamCompleteEvent,
@@ -102,7 +102,7 @@ class RoleActivityEvent(BaseEvent):
 
     thread_id: int
     role_name: str
-    activity_type: Literal["thinking", "tool_call", "status", "error", "stream"]
+    activity_type: RoleActivityType
     content: str
     type: Literal["role_activity"] = "role_activity"
 
