@@ -19,12 +19,12 @@ from dotenv import load_dotenv
 from omg_cli.abstract.none import NoneAdapter
 from omg_cli.config import get_adapter_manager
 from omg_cli.context import ChatContext
+from omg_cli.gui import run_gui
 from omg_cli.log import logger
 from omg_cli.shell import run_terminal
 
 
-def main():
-    """Main entry point (synchronous)."""
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="OMG CLI - AI-powered terminal assistant",
     )
@@ -49,7 +49,18 @@ def main():
         action="store_true",
         help="Enable Channel mode for multi-role sub-agent collaboration",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Launch the experimental PySide6 GUI",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None):
+    """Main entry point (synchronous)."""
+    parser = _build_parser()
+    args = parser.parse_args(argv)
 
     # Enable logging only in debug mode
     if args.debug:
@@ -101,6 +112,10 @@ def main():
             logger.error(f"错误: 未找到会话 '{args.session_id}'")
             sys.exit(1)
         logger.info(f"已恢复会话: {args.session_id}")
+
+    if args.gui:
+        run_gui(context=context, channel=args.channel)
+        return
 
     # Run TUI (this will block until app exits)
     run_terminal(context, channel=args.channel)
