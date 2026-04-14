@@ -104,13 +104,57 @@ class ConfigManager:
     def load_user_config(self) -> UserConfig:
         """Load user configuration from TOML."""
         data = self._load_toml()
-        return UserConfig(default_model=data.get("default_model"))
+        return UserConfig(
+            default_model=data.get("default_model"),
+            working_directory=data.get("working_directory"),
+            recent_directories=data.get("recent_directories", []),
+        )
 
     def save_user_config(self, config: UserConfig) -> None:
         """Save user configuration to TOML, preserving MCP server sections."""
         data = self._load_toml()
-        data["default_model"] = config.default_model
+        if config.default_model is None:
+            data.pop("default_model", None)
+        else:
+            data["default_model"] = config.default_model
+
+        if config.working_directory is None:
+            data.pop("working_directory", None)
+        else:
+            data["working_directory"] = str(config.working_directory)
+
+        data["recent_directories"] = [str(path) for path in config.recent_directories]
         self._save_toml(data)
+
+    def get_working_directory(self) -> Path | None:
+        """Return persisted working directory, if configured and exists."""
+        config = self.load_user_config()
+        if config.working_directory is None:
+            return None
+        if not config.working_directory.exists() or not config.working_directory.is_dir():
+            return None
+        return config.working_directory
+
+    def set_working_directory(self, path: Path, *, update_recent: bool = True) -> None:
+        """Persist selected working directory and optionally update recent list."""
+        resolved = path.expanduser().resolve()
+        if not resolved.exists() or not resolved.is_dir():
+            raise ValueError(f"Invalid working directory: {resolved}")
+
+        config = self.load_user_config()
+        config.working_directory = resolved
+
+        if update_recent:
+            recent = [p for p in config.recent_directories if p != resolved]
+            recent.insert(0, resolved)
+            config.recent_directories = recent[:10]
+
+        self.save_user_config(config)
+
+    def list_recent_directories(self) -> list[Path]:
+        """List recent directories that still exist on disk."""
+        config = self.load_user_config()
+        return [path for path in config.recent_directories if path.exists() and path.is_dir()]
 
     def get_default_model(self) -> ModelConfig | None:
         """Get the default model."""

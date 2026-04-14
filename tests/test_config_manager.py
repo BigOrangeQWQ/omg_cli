@@ -32,6 +32,33 @@ class TestUserConfig:
     def test_user_config_defaults(self, manager: ConfigManager) -> None:
         loaded = manager.load_user_config()
         assert loaded.default_model is None
+        assert loaded.working_directory is None
+        assert loaded.recent_directories == []
+
+    def test_set_working_directory(self, manager: ConfigManager, temp_config_dir: Path) -> None:
+        workspace = temp_config_dir / "workspace"
+        workspace.mkdir()
+
+        manager.set_working_directory(workspace)
+        loaded = manager.load_user_config()
+
+        assert loaded.working_directory == workspace
+        assert loaded.recent_directories[0] == workspace
+        assert manager.get_working_directory() == workspace
+
+    def test_recent_directories_are_deduplicated(self, manager: ConfigManager, temp_config_dir: Path) -> None:
+        first = temp_config_dir / "workspace-a"
+        second = temp_config_dir / "workspace-b"
+        first.mkdir()
+        second.mkdir()
+
+        manager.set_working_directory(first)
+        manager.set_working_directory(second)
+        manager.set_working_directory(first)
+
+        recent = manager.list_recent_directories()
+        assert recent[0] == first
+        assert recent[1] == second
 
 
 class TestMCPServers:

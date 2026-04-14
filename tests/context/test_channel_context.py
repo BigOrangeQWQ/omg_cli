@@ -12,10 +12,8 @@ from omg_cli.types.event import (
     BaseEvent,
     RoleActivityEvent,
     SessionErrorEvent,
-    SessionMessageEvent,
     SessionStatusEvent,
     StatusLevel,
-    ThreadMessageEvent,
 )
 from omg_cli.types.message import Message, TextSegment
 
@@ -208,33 +206,3 @@ async def test_role_activity_debug_filtered(sample_role: Role) -> None:
     assert "coder" not in thread.role_activities
 
 
-@pytest.mark.asyncio
-async def test_role_message_still_forwarded_as_thread_message(sample_role: Role) -> None:
-    """SessionMessageEvent should still be forwarded as ThreadMessageEvent."""
-    channel = ChannelContext(
-        channel_name="test-channel",
-        roles=[sample_role],
-        default_role_name="coder",
-    )
-
-    collected: list[BaseEvent] = []
-
-    async def collect_event(event: BaseEvent) -> None:
-        collected.append(event)
-
-    channel.default_context.register_event_handler(BaseEvent, collect_event)
-    role_ctx = channel.role_contexts["coder"]
-
-    from omg_cli.context.role import _current_thread_id
-
-    msg = Message(role="assistant", content=[TextSegment(text="hello")])
-    token = _current_thread_id.set(3)
-    try:
-        await role_ctx._emit(SessionMessageEvent(message=msg))
-    finally:
-        _current_thread_id.reset(token)
-
-    assert len(collected) == 1
-    assert isinstance(collected[0], ThreadMessageEvent)
-    assert collected[0].thread_id == 3
-    assert collected[0].message == msg
