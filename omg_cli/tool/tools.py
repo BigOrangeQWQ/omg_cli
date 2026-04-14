@@ -61,9 +61,9 @@ async def ReadFile(
     For longer files, use multiple reads.
     """
     file_path = Path(path)
-    if not file_path.exists():
+    if not await file_path.exists():
         raise ToolError(f"Not found: {path}")
-    if not file_path.is_file():
+    if not await file_path.is_file():
         raise ToolError(f"Not a file: {path}")
 
     if not file_path.is_absolute():
@@ -102,9 +102,9 @@ async def WriteFile(
     use this tool multiple times instead of a single call.
     """
     file_path = Path(path)
-    if not file_path.exists():
+    if not await file_path.exists():
         raise ToolError(f"Not found: {path}")
-    if not file_path.is_file():
+    if not await file_path.is_file():
         raise ToolError(f"Not a file: {path}")
 
     if not file_path.is_absolute():
@@ -140,9 +140,9 @@ async def StrReplace(
     You should prefer this tool over WriteFile tool and Bash `sed` command.
     """
     file_path = Path(path)
-    if not file_path.exists():
+    if not await file_path.exists():
         raise ToolError(f"Not found: {path}")
-    if not file_path.is_file():
+    if not await file_path.is_file():
         raise ToolError(f"Not a file: {path}")
 
     if not file_path.is_absolute():
@@ -239,7 +239,7 @@ async def Glob(
     ] = 100,
 ) -> str:
     """Search for files matching a glob pattern."""
-    search_path = Path(path) if path else await Path.cwd()
+    search_path = Path(path) if path else (await Path.cwd())
 
     if not search_path.is_absolute():
         raise ToolError(f"`{path}` is not an absolute path. You must provide an absolute path to search.")
