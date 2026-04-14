@@ -142,6 +142,7 @@ class AnthropicAPI(ChatAdapter):
 
         request_kwargs.update(
             {
+                "cache_control": {"type": "ephemeral"},
                 "model": self.model,
                 "messages": anthropic_messages,
                 "system": system_prompt,
