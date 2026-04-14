@@ -26,9 +26,10 @@ def test_main_routes_to_gui(monkeypatch) -> None:
 
     monkeypatch.setattr(main_mod, "ChatContext", _fake_chat_context)
 
-    def _fake_run_gui(*, context, channel):
+    def _fake_run_gui(*, context, channel, debug):
         calls["gui"] += 1
         assert channel is False
+        assert debug is False
 
     def _fake_run_terminal(context, channel):
         calls["tui"] += 1

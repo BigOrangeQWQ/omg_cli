@@ -1,3 +1,139 @@
+from types import SimpleNamespace
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+def _get_qapp():
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+    return app
+
+
+class _FakeDefaultContext:
+    def __init__(self) -> None:
+        self.handlers = []
+
+    def register_event_handler(self, event_type, handler) -> None:
+        self.handlers.append((event_type, handler))
+
+    def list_saved_sessions(self):
+        return []
+
+
+def test_channel_tabbar_in_content_area(monkeypatch) -> None:
+    from omg_cli.gui import Window
+
+    _get_qapp()
+
+    thread_0 = SimpleNamespace(id=0, title="Default Thread", status="draft", messages=[])
+    thread_1 = SimpleNamespace(id=1, title="Design", status="running", messages=[])
+    channel_context = SimpleNamespace(
+        thread_map={0: thread_0, 1: thread_1},
+        threads=[thread_0, thread_1],
+        default_context=_FakeDefaultContext(),
+        list_saved_sessions=lambda: [],
+    )
+
+    monkeypatch.setattr(Window, "initWindow", lambda self: None)
+
+    window = Window(context=channel_context, channel=True, debug=False)
+
+    # TabBar should stay in channel content area (not title bar/header).
+    assert window.channelInterface.tab_bar.parent() is window.channelInterface
+    assert window.channelInterface.main_layout.indexOf(window.channelInterface.tab_bar) == 0
+    assert window.channelInterface.tab_bar.tabText(0) == "#0 Default Thread"
+    assert window.channelInterface.tab_bar.tabText(1).startswith("🟢 #1 Design")
+
+
+def test_channel_status_updates_tab_text() -> None:
+    from omg_cli.gui.channel.interface import ChannelInterface
+
+    _get_qapp()
+
+    thread = SimpleNamespace(id=1, title="Docs", status="draft", messages=[])
+    channel_context = SimpleNamespace(
+        thread_map={1: thread},
+        threads=[thread],
+        default_context=_FakeDefaultContext(),
+    )
+
+    interface = ChannelInterface(channel_context=channel_context)
+    assert interface.tab_bar.tabText(0).startswith("📝 #1 Docs")
+
+    interface._on_thread_status_changed(1, "done")
+    assert thread.status == "done"
+    assert interface.tab_bar.tabText(0).startswith("✅ #1 Docs")
+
+
+from types import SimpleNamespace
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+def _get_qapp():
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+    return app
+
+
+class _FakeDefaultContext:
+    def __init__(self) -> None:
+        self.handlers = []
+
+    def register_event_handler(self, event_type, handler) -> None:
+        self.handlers.append((event_type, handler))
+
+
+def test_channel_header_tabbar_uses_thread_status_emojis(monkeypatch) -> None:
+    from omg_cli.gui import Window
+
+    _get_qapp()
+
+    thread_0 = SimpleNamespace(id=0, title="Default Thread", status="draft", messages=[])
+    thread_1 = SimpleNamespace(id=1, title="Design", status="running", messages=[])
+    channel_context = SimpleNamespace(
+        thread_map={0: thread_0, 1: thread_1},
+        threads=[thread_0, thread_1],
+        default_context=_FakeDefaultContext(),
+    )
+
+    monkeypatch.setattr(Window, "initWindow", lambda self: None)
+
+    window = Window(context=channel_context, channel=True, debug=False)
+
+    assert window.channelInterface.tab_bar.parent() is window.titleBar
+    assert window.channelInterface.tab_bar.tabText(0) == "#0 Default Thread"
+    assert window.channelInterface.tab_bar.tabText(1).startswith("🟢 #1 Design")
+
+
+def test_channel_status_updates_tab_text(monkeypatch) -> None:
+    from omg_cli.gui.channel.interface import ChannelInterface
+
+    _get_qapp()
+
+    thread = SimpleNamespace(id=1, title="Docs", status="draft", messages=[])
+    channel_context = SimpleNamespace(
+        thread_map={1: thread},
+        threads=[thread],
+        default_context=_FakeDefaultContext(),
+    )
+
+    interface = ChannelInterface(channel_context=channel_context)
+    assert interface.tab_bar.tabText(0).startswith("📝 #1 Docs")
+
+    interface._on_thread_status_changed(1, "done")
+    assert thread.status == "done"
+    assert interface.tab_bar.tabText(0).startswith("✅ #1 Docs")
+
+
 from datetime import datetime
 import os
 from types import SimpleNamespace

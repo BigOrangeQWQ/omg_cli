@@ -5,24 +5,25 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QHBoxLayout, QStackedWidget, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     CardWidget,
     PrimaryPushButton,
+    ScrollArea,
     StrongBodyLabel,
     TabBar,
-    TextBrowser,
 )
 from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
-from omg_cli.gui.chat import InputMethodTextEdit
+from omg_cli.gui.bridge import ContextEventBridge
+from omg_cli.gui.chat import InputMethodTextEdit, MessageBubble, MessageItem
 from omg_cli.log import logger
-from omg_cli.types.event import BaseEvent, ThreadMessageEvent, ThreadSpawnedEvent, ThreadStatusChangedEvent
+from omg_cli.types.event import RoleActivityEvent
 from omg_cli.types.message import Message, TextSegment
 
 
@@ -55,14 +56,21 @@ class ThreadPage(QWidget):
         message_layout.setSpacing(8)
 
         self.message_title = StrongBodyLabel(self.tr("对话"), self.message_card)
-        self.message_view = TextBrowser(self.message_card)
-        self.message_view.setOpenExternalLinks(True)
-        self.message_view.setStyleSheet(
-            "TextBrowser { border: none; background: transparent; color: rgb(255, 255, 255); }"
-        )
+        self.message_scroll_area = ScrollArea(self.message_card)
+        self.message_scroll_widget = QWidget(self.message_scroll_area)
+        self.messages_layout = QVBoxLayout(self.message_scroll_widget)
+        self.messages_layout.setAlignment(Qt.AlignTop)
+        self.messages_layout.setSpacing(12)
+        self.messages_layout.addStretch(1)
+
+        self.message_scroll_area.setWidget(self.message_scroll_widget)
+        self.message_scroll_area.setWidgetResizable(True)
+        self.message_scroll_area.enableTransparentBackground()
+        self.message_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.message_scroll_widget.setStyleSheet("background-color: transparent;")
 
         message_layout.addWidget(self.message_title)
-        message_layout.addWidget(self.message_view, stretch=1)
+        message_layout.addWidget(self.message_scroll_area, stretch=1)
 
         self.input_container = QWidget(self)
 
@@ -88,22 +96,30 @@ class ThreadPage(QWidget):
         self.input_edit.installEventFilter(self)
 
     def set_messages(self, messages: list[Message]) -> None:
-        self.message_view.clear()
+        self._clear_messages()
         for message in messages:
-            role = message.role
-            name = message.name or role
-            text = message.text or ""
-            if not text:
-                text = "\n".join(str(seg) for seg in message.content)
-            self.message_view.append(f"[{name}] {text}")
+            self.append_message(message)
 
     def append_message(self, message: Message) -> None:
-        role = message.role
-        name = message.name or role
-        text = message.text or ""
-        if not text:
-            text = "\n".join(str(seg) for seg in message.content)
-        self.message_view.append(f"[{name}] {text}")
+        bubble = MessageBubble(message)
+        if not bubble.has_visible_content:
+            bubble.deleteLater()
+            return
+        item = MessageItem(bubble, message.role)
+        idx = self.messages_layout.count() - 1
+        self.messages_layout.insertWidget(idx, item)
+        self._scroll_to_bottom()
+
+    def _clear_messages(self) -> None:
+        while self.messages_layout.count() > 1:
+            item = self.messages_layout.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
+
+    def _scroll_to_bottom(self) -> None:
+        vsb = self.message_scroll_area.verticalScrollBar()
+        if vsb:
+            vsb.setValue(vsb.maximum())
 
     def _on_submit(self) -> None:
         text = self.input_edit.toPlainText().strip()
@@ -127,9 +143,18 @@ class ThreadPage(QWidget):
 class ChannelInterface(QWidget):
     """Channel interface that mirrors chat layout with thread tabs."""
 
-    def __init__(self, *, channel_context: Any | None = None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        channel_context: Any | None = None,
+        bridge: ContextEventBridge | None = None,
+        debug: bool = False,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent=parent)
         self.channel_context = channel_context
+        self.bridge = bridge or ContextEventBridge(channel_context)
+        self.debug = debug
         self._route_to_thread_id: dict[str, int] = {}
         self._thread_pages: dict[int, ThreadPage] = {}
         self._tab_routes: list[str] = []
@@ -139,7 +164,7 @@ class ChannelInterface(QWidget):
         self.setStyleSheet("ChannelInterface { background-color: #151515; }")
 
         self._init_ui()
-        self._bind_context_events()
+        self._bind_bridge_events()
         self.refresh_threads()
 
     def _init_ui(self) -> None:
@@ -159,6 +184,12 @@ class ChannelInterface(QWidget):
 
         # Place thread tabs directly above message content for a clearer visual hierarchy.
         self.main_layout.addWidget(self.tab_bar)
+
+        self.runtime_label = BodyLabel("", self)
+        self.runtime_label.setWordWrap(True)
+        self.runtime_label.setStyleSheet("color: #b8bcc2; padding: 2px 6px;")
+        self.runtime_label.hide()
+        self.main_layout.addWidget(self.runtime_label)
 
         self.empty_hint = BodyLabel(self.tr("暂无线程，等待后续 Event 创建。"), self)
         self.empty_hint.setStyleSheet("color: #c0c0c0; padding: 12px 6px;")
@@ -213,26 +244,69 @@ class ChannelInterface(QWidget):
         if self._tab_routes:
             self._switch_to_route(self._tab_routes[0])
 
-    def _bind_context_events(self) -> None:
-        if self.channel_context is None:
+    def _bind_bridge_events(self) -> None:
+        if self.bridge is None:
+            return
+        self.bridge.threadSpawned.connect(self._on_thread_spawned)
+        self.bridge.threadMessageReceived.connect(self._append_thread_message)
+        self.bridge.threadStatusChanged.connect(self._on_thread_status_changed)
+        if self.debug:
+            self.bridge.roleActivityReceived.connect(self._on_role_activity)
+            self.bridge.statusReceived.connect(self._on_session_status)
+        self.bridge.errorReceived.connect(self._on_session_error)
+        if self.debug:
+            self.bridge.eventReceived.connect(self._on_any_event)
+
+    def _on_thread_spawned(self, thread: Any) -> None:
+        self.refresh_threads()
+        thread_id = int(getattr(thread, "id", -1))
+        route = self._thread_route_key(thread_id)
+        if route in self._route_to_thread_id:
+            self._switch_to_route(route)
+            self._set_runtime_hint(f"已创建线程 #{thread_id}", "info")
+
+    def _on_role_activity(self, thread_id: int, role_name: str, activity_type: str, content: str) -> None:
+        page = self._thread_pages.get(thread_id)
+        if page is None:
             return
 
-        default_context = getattr(self.channel_context, "default_context", None)
-        if default_context is None:
+        activity_text = activity_type.strip().lower()
+        body = f"[{activity_text}] {content}".strip()
+        if content.strip():
+            page.append_message(Message(role="assistant", name=role_name, content=[TextSegment(text=body)]))
+        else:
+            page.append_message(Message(role="assistant", name=role_name, content=[TextSegment(text=body)]))
+
+    def _on_session_status(self, detail: str) -> None:
+        if detail.strip():
+            self._set_runtime_hint(detail, "info")
+
+    def _on_session_error(self, detail: str) -> None:
+        if detail.strip():
+            self._set_runtime_hint(detail, "error")
+
+    def _on_any_event(self, event: Any) -> None:
+        # Keep eventReceived wired for future channel-side expansion and quick diagnostics.
+        if isinstance(event, RoleActivityEvent):
+            self._set_runtime_hint(
+                f"{event.role_name}: {event.activity_type}",
+                "info",
+            )
+
+    def _set_runtime_hint(self, text: str, level: str) -> None:
+        if not text:
+            self.runtime_label.hide()
             return
 
-        default_context.register_event_handler(BaseEvent, self._on_context_event)
+        color = "#b8bcc2"
+        if level == "error":
+            color = "#ff6b6b"
+        elif level == "success":
+            color = "#51cf66"
 
-    async def _on_context_event(self, event: BaseEvent) -> None:
-        if isinstance(event, ThreadSpawnedEvent):
-            QTimer.singleShot(0, self.refresh_threads)
-            return
-
-        if isinstance(event, ThreadMessageEvent):
-            QTimer.singleShot(0, lambda: self._append_thread_message(event.thread_id, event.message))
-
-        if isinstance(event, ThreadStatusChangedEvent):
-            QTimer.singleShot(0, lambda: self._on_thread_status_changed(event.thread_id, event.status))
+        self.runtime_label.setText(text)
+        self.runtime_label.setStyleSheet(f"color: {color}; padding: 2px 6px;")
+        self.runtime_label.show()
 
     def _append_thread_message(self, thread_id: int, message: Message) -> None:
         page = self._thread_pages.get(thread_id)
