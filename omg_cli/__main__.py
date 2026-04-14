@@ -138,7 +138,7 @@ def main(argv: list[str] | None = None):
             )
 
     if args.gui:
-        run_gui(context=context, channel=channel_mode)
+        run_gui(context=context, channel=args.channel, debug=args.debug)
         return
 
     # Run TUI (this will block until app exits)
