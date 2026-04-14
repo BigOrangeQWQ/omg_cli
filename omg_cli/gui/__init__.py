@@ -46,19 +46,27 @@ class Widget(QWidget):
 
 
 class Window(MSFluentWindow):
-    def __init__(self, *, context: Any | None = None, debug: bool = False) -> None:
+    def __init__(self, *, context: Any | None = None, channel: bool = False, debug: bool = False) -> None:
         super().__init__()
 
+        from omg_cli.gui.channel import ChannelInterface
         from omg_cli.gui.chat import ChatInterface
         from omg_cli.gui.session import SessionInterface
 
-        self.chatInterface = ChatInterface(context=context, debug=debug, parent=self)
-        self.sessionInterface = SessionInterface(context=context, parent=self)
+        self._channel_mode = channel
+        self.chatInterface = ChatInterface(context=context, debug=debug, parent=self) if not channel else None
+        self.channelInterface = ChannelInterface(channel_context=context, parent=self) if channel else None
+
+        session_context = context.default_context if channel and hasattr(context, "default_context") else context
+        self.sessionInterface = SessionInterface(context=session_context, parent=self)
         self.initNavigation()
         self.initWindow()
 
     def initNavigation(self) -> None:
-        self.addSubInterface(self.chatInterface, FIF.CHAT, "对话", FIF.CHAT)
+        if self._channel_mode and self.channelInterface is not None:
+            self.addSubInterface(self.channelInterface, FIF.CHAT, "Channel", FIF.CHAT)
+        elif self.chatInterface is not None:
+            self.addSubInterface(self.chatInterface, FIF.CHAT, "对话", FIF.CHAT)
         self.addSubInterface(self.sessionInterface, FIF.HISTORY, "会话历史", FIF.HISTORY)
 
     def initWindow(self) -> None:
@@ -69,14 +77,6 @@ class Window(MSFluentWindow):
         desktop = QApplication.screens()[0].availableGeometry()
         w, h = desktop.width(), desktop.height()
         self.move(w // 2 - self.width() // 2, h // 2 - self.height() // 2)
-
-
-def _resolve_chat_context(context: Any, channel: bool) -> Any:
-    if context is None:
-        return None
-    if channel and hasattr(context, "default_context"):
-        return context.default_context
-    return context
 
 
 def run_gui(*, context: Any | None = None, channel: bool = False, debug: bool = False) -> None:
@@ -91,8 +91,7 @@ def run_gui(*, context: Any | None = None, channel: bool = False, debug: bool = 
     setTheme(Theme.DARK)
     _try_apply_sources_font(app)
 
-    chat_context = _resolve_chat_context(context, channel)
-    window = Window(context=chat_context, debug=debug)
+    window = Window(context=context, channel=channel, debug=debug)
 
     window.show()
 
