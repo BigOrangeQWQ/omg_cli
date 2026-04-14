@@ -118,7 +118,7 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
         TodoProtocol.__init__(self)
 
         # Core attributes
-        self.session_id = uuid4().hex
+        self.session_id = str(uuid4())
         self.provider = provider
         self.system_prompt = system_prompt
         self.messages: list[Message] = list(messages or [])
@@ -200,7 +200,7 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
         self._message_queue.clear()  # Clear pending message queue
 
         # Generate new session ID for new conversation
-        self.session_id = uuid4().hex
+        self.session_id = str(uuid4())
 
         await self._initial_context_size()
 

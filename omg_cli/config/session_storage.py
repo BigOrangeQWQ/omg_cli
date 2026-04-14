@@ -1,14 +1,16 @@
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, DirectoryPath, Field
 
+from omg_cli.types.channel_session import ChannelSessionState
 from omg_cli.types.message import Message
 
 
 class SessionMetadata(BaseModel):
     session_id: str
+    chat_mode: Literal["chat", "channel"] = "chat"
     created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
     workspace: DirectoryPath
@@ -47,6 +49,9 @@ class SessionStorage:
 
     def _get_messages_path(self, session_id: str) -> Path:
         return self._get_session_dir(session_id) / "messages.jsonl"
+
+    def _get_channel_state_path(self, session_id: str) -> Path:
+        return self._get_session_dir(session_id) / "channel_state.json"
 
     def save_metadata(self, metadata: SessionMetadata) -> None:
         self._ensure_dir_exists()
@@ -99,6 +104,32 @@ class SessionStorage:
         with open(messages_path, "w", encoding="utf-8") as f:
             for message in messages:
                 f.write(message.model_dump_json() + "\n")
+
+    def save_channel_session(self, session_id: str, state: ChannelSessionState) -> None:
+        """Persist a ChannelSessionState to the session's channel_state.json file."""
+        channel_state_path = self._get_channel_state_path(session_id)
+        channel_state_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(channel_state_path, "w", encoding="utf-8") as f:
+            f.write(state.model_dump_json(indent=2))
+
+        metadata = self.load_metadata(session_id)
+        if metadata:
+            metadata.updated_at = datetime.now(tz=UTC)
+            self.save_metadata(metadata)
+
+    def load_channel_session(self, session_id: str) -> ChannelSessionState | None:
+        """Load a ChannelSessionState from the session's channel_state.json file."""
+        channel_state_path = self._get_channel_state_path(session_id)
+        if not channel_state_path.exists():
+            return None
+
+        try:
+            with open(channel_state_path, encoding="utf-8") as f:
+                data = f.read()
+            return ChannelSessionState.model_validate_json(data)
+        except Exception:
+            return None
 
     def load_messages(self, session_id: str) -> list[Message]:
         messages_path = self._get_messages_path(session_id)

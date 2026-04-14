@@ -42,6 +42,7 @@ class ChatContext(MetaContext):
             model_name=self.provider.model_name,
         )
         self._session_storage = SessionStorage()
+        self._session_storage.save_metadata(self._session_metadata)
 
     async def append(self, message: Message, display: bool = True) -> None:
         try:

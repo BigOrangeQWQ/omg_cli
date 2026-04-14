@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, SecretStr
@@ -107,3 +108,5 @@ class ChannelConfig(BaseModel):
 
 class UserConfig(BaseModel):
     default_model: str | None = None
+    working_directory: Path | None = None
+    recent_directories: list[Path] = Field(default_factory=list)
