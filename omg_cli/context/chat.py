@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 from omg_cli.config import SessionMetadata
@@ -5,7 +6,7 @@ from omg_cli.config.session_storage import ChatSessionStorage
 from omg_cli.context.command import CommandProtocol
 from omg_cli.context.meta import MetaContext, Notifier, tool_call_to_message
 from omg_cli.context.tool_manager import ToolConfirmationDecision, ToolManagerProtocol
-from omg_cli.types.event import SessionErrorEvent, SessionMessageEvent
+from omg_cli.types.event import SessionErrorEvent, SessionLoadedEvent, SessionMessageEvent
 from omg_cli.types.message import Message, ToolCall
 from omg_cli.types.skill import SkillRef
 from omg_cli.types.tool import Tool, ToolError
@@ -137,6 +138,14 @@ class ChatContext(MetaContext):
             self._session_metadata = metadata
             self.messages = messages
             self.display_messages = list(messages)
+
+            # Notify GUI/TUI subscribers to re-render history after load.
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._emit(SessionLoadedEvent()))
+            except RuntimeError:
+                # No running loop (rare in tests/early bootstrap); state is still loaded.
+                pass
 
             return True
         except Exception:

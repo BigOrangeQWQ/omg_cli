@@ -74,7 +74,6 @@ class SessionCard(CardWidget):
         self._layout.addWidget(self.open_button, 0, Qt.AlignmentFlag.AlignRight)
         self._layout.addWidget(self.delete_button, 0, Qt.AlignmentFlag.AlignRight)
 
-        self.clicked.connect(self._on_card_clicked)
         self.open_button.clicked.connect(self._on_open_clicked)
         self.delete_button.clicked.connect(self._on_delete_clicked)
 
@@ -102,9 +101,6 @@ class SessionCard(CardWidget):
         local_time = value.astimezone()
         return local_time.strftime("%Y-%m-%d %H:%M:%S")
 
-    def _on_card_clicked(self) -> None:
-        self.loadRequested.emit(self.metadata.session_id)
-
     def _on_open_clicked(self) -> None:
         self.loadRequested.emit(self.metadata.session_id)
 
@@ -121,6 +117,7 @@ class SessionInterface(QWidget):
     def __init__(
         self,
         context: ChatContext | None = None,
+        chat_mode: str = "chat",
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent=parent)
@@ -129,6 +126,7 @@ class SessionInterface(QWidget):
 
         self.context = context
         self.storage = SessionStorage()
+        self.chat_mode = chat_mode
 
         self._init_ui()
         self.refresh_sessions()
@@ -205,8 +203,21 @@ class SessionInterface(QWidget):
 
     def _load_sessions(self) -> list[SessionMetadata]:
         if self.context is not None:
-            return self.context.list_saved_sessions()
-        return self.storage.list_sessions()
+            sessions = self.context.list_saved_sessions()
+        else:
+            sessions = self.storage.list_sessions()
+        return [s for s in sessions if self._session_mode(s) == self.chat_mode]
+
+    def _session_mode(self, metadata: SessionMetadata) -> str:
+        # Backward compatibility: some old channel sessions may still carry default chat_mode,
+        # so infer channel mode when channel_state.json exists.
+        if metadata.chat_mode == "channel":
+            return "channel"
+
+        if self.storage.load_channel_session(metadata.session_id) is not None:
+            return "channel"
+
+        return "chat"
 
     def _render_sessions(self, sessions: list[SessionMetadata]) -> None:
         self._clear_session_cards()

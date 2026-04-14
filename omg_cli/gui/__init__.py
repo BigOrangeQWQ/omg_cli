@@ -14,6 +14,7 @@ from qasync import QEventLoop
 from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets import MSFluentWindow, SubtitleLabel, Theme, setFont, setTheme
 
+from omg_cli.gui.bridge import ContextEventBridge
 from omg_cli.gui.utils import emoji_to_pixmap
 
 
@@ -55,10 +56,19 @@ class Window(MSFluentWindow):
 
         self._channel_mode = channel
         self.chatInterface = ChatInterface(context=context, debug=debug, parent=self) if not channel else None
-        self.channelInterface = ChannelInterface(channel_context=context, parent=self) if channel else None
+        self.channelBridge = ContextEventBridge(context, parent=self) if channel else None
+        self.channelInterface = (
+            ChannelInterface(channel_context=context, bridge=self.channelBridge, debug=debug, parent=self)
+            if channel
+            else None
+        )
 
         session_context = context.default_context if channel and hasattr(context, "default_context") else context
-        self.sessionInterface = SessionInterface(context=session_context, parent=self)
+        self.sessionInterface = SessionInterface(
+            context=session_context,
+            chat_mode="channel" if channel else "chat",
+            parent=self,
+        )
         self.initNavigation()
         self.initWindow()
 

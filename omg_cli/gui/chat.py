@@ -75,6 +75,8 @@ class AutoHeightTextBrowser(TextBrowser):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent=parent)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setFrameShape(QFrame.NoFrame)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -133,7 +135,9 @@ class ToolCallCard(CardWidget):
 
     def __init__(self, tool_name: str, arguments: dict | None, parent: QWidget | None = None) -> None:
         super().__init__(parent=parent)
-        self.setMaximumWidth(2880)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMaximumWidth(16777215)
         layout = QVBoxLayout(self)
         layout.setSpacing(6)
         layout.setContentsMargins(12, 10, 12, 10)
@@ -164,6 +168,9 @@ class ThinkCard(CardWidget):
 
     def __init__(self, thought_process: str, parent: QWidget | None = None) -> None:
         super().__init__(parent=parent)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMaximumWidth(16777215)
         self._full_text = thought_process
         self._collapsed = True
 
@@ -217,8 +224,11 @@ class MessageBubble(CardWidget):
     def __init__(self, message: Message, parent: QWidget | None = None) -> None:
         super().__init__(parent=parent)
         self.message = message
+        self.has_visible_content = False
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMaximumWidth(16777215)
         self.setObjectName("messageBubble")
-        self.setMaximumWidth(2880)
         self._setup_ui()
 
     def _hoverBackgroundColor(self):
@@ -237,10 +247,15 @@ class MessageBubble(CardWidget):
             self.title_label = StrongBodyLabel(title, self)
             layout.addWidget(self.title_label)
 
+        visible_count = 0
         for segment in self.message.content:
             widget = self._build_segment_widget(segment)
             if widget:
+                widget.setFocusPolicy(Qt.NoFocus)
                 layout.addWidget(widget)
+                visible_count += 1
+
+        self.has_visible_content = visible_count > 0
 
     def _title_text(self) -> str:
         match self.message.role:
@@ -260,6 +275,7 @@ class MessageBubble(CardWidget):
                     label = BodyLabel(text, self)
                     label.setWordWrap(True)
                     label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+                    label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
                     return label
                 browser = AutoHeightTextBrowser(self)
                 browser.setMarkdownText(text)
@@ -340,6 +356,8 @@ class StreamMessageBubble(CardWidget):
 
         self._text_buffer = ""
         self._think_buffer = ""
+        self._tool_name = ""
+        self._tool_args_buffer = ""
 
     def append_text(self, text: str) -> None:
         self._text_buffer += text
@@ -353,9 +371,20 @@ class StreamMessageBubble(CardWidget):
         self.think_label.show()
 
     def append_tool(self, tool_name: str, args: str) -> None:
-        display = f"> Tool: {tool_name}"
+        if tool_name != self._tool_name:
+            self._tool_name = tool_name
+            self._tool_args_buffer = ""
+
         if args:
-            display += f"\n{args}"
+            # Support both delta chunks and cumulative snapshots.
+            if args.startswith(self._tool_args_buffer):
+                self._tool_args_buffer = args
+            else:
+                self._tool_args_buffer += args
+
+        display = f"> Tool: {self._tool_name}"
+        if self._tool_args_buffer:
+            display += f"\n{self._tool_args_buffer}"
         self.tool_label.setText(display)
         self.tool_label.show()
 
@@ -517,8 +546,15 @@ class ApprovalPanel(CardWidget):
 class MessageItem(QWidget):
     """Wrapper that aligns the bubble left, right, or center depending on role."""
 
+    BUBBLE_WIDTH_RATIO = 0.72
+    BUBBLE_MAX_WIDTH = 980
+    BUBBLE_MIN_WIDTH = 220
+
     def __init__(self, bubble: QWidget, role: str, parent: QWidget | None = None) -> None:
         super().__init__(parent=parent)
+        self._bubble = bubble
+        self._role = role
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -533,6 +569,30 @@ class MessageItem(QWidget):
         else:
             layout.addWidget(bubble, alignment=Qt.AlignTop | Qt.AlignLeft)
             layout.addStretch(1)
+
+        # Run after layout is settled so initial width follows container size.
+        QTimer.singleShot(0, self._update_bubble_width)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._update_bubble_width()
+
+    def _update_bubble_width(self) -> None:
+        if self._role == "status":
+            return
+
+        available = self.width()
+        if available <= 0:
+            return
+
+        upper = max(available - 8, 0)
+        if upper <= 0:
+            return
+
+        target = min(int(available * self.BUBBLE_WIDTH_RATIO), self.BUBBLE_MAX_WIDTH, upper)
+        target = max(min(self.BUBBLE_MIN_WIDTH, upper), target)
+
+        self._bubble.setFixedWidth(target)
 
 
 # =============================================================================
@@ -806,11 +866,7 @@ class ChatInterface(QWidget):
                 self._current_stream_bubble.append_thinking(text)
             case ToolCallDetailSegment(tool_name=tool_name, partial_arguments=partial_arguments):
                 self._ensure_stream_bubble()
-                args_preview = ""
-                if partial_arguments:
-                    args_preview = _format_arguments({"args": partial_arguments}, max_lines=1)
-                    args_preview = args_preview.replace("args: ", "", 1)
-                self._current_stream_bubble.append_tool(tool_name, args_preview)
+                self._current_stream_bubble.append_tool(tool_name, partial_arguments)
         self._scroll_to_bottom()
 
     # -------------------------------------------------------------------------
@@ -837,6 +893,9 @@ class ChatInterface(QWidget):
 
     def _add_message_bubble(self, message: Message) -> None:
         bubble = MessageBubble(message)
+        if not bubble.has_visible_content:
+            bubble.deleteLater()
+            return
         item = MessageItem(bubble, message.role)
         # insert before the trailing stretch
         idx = self.messages_layout.count() - 1
