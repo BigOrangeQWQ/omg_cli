@@ -142,6 +142,7 @@ class OpenAIAPI(ChatAdapter):
         _tools = [tool_to_openai_response_function(tool) for tool in tools]
 
         response: Response = await self.client.responses.create(
+            prompt_cache_retention="in-memory",
             model=self.model,
             input=response_input,  # type: ignore
             tools=_tools,  # type: ignore
