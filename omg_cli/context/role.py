@@ -5,14 +5,20 @@ import contextvars
 from pathlib import Path
 import re
 from typing import Any
+from uuid import uuid4
 
 from pydantic import BaseModel
 
 from omg_cli.config.role import RoleManager, get_role_manager
+from omg_cli.config.session_storage import ChannelSessionStorage, ChannelThreadMetadata, SessionMetadata
 from omg_cli.context.chat import ChatContext
 from omg_cli.context.meta import MetaContext, tool_call_to_message
 from omg_cli.log import logger
-from omg_cli.prompts import render_plan_prompt, render_role_prompt, render_role_round_reminder_prompt
+from omg_cli.prompts import (
+    render_plan_prompt,
+    render_role_prompt,
+    render_role_round_reminder_prompt,
+)
 from omg_cli.types.channel import Role, RoleActivityRecord, RoleActivityType, Thread, ThreadStatus
 from omg_cli.types.event import (
     BaseEvent,
@@ -79,40 +85,84 @@ class ChannelContext:
     def __init__(
         self,
         channel_name: str,
-        provider: Any = None,
-        system_prompt: str = "",
         roles: Sequence[Role] | None = None,
         threads: Sequence[Thread] | None = None,
         default_role_name: str | None = None,
+        session_id: str | None = None,
+        session_storage: ChannelSessionStorage | None = None,
     ):
         from omg_cli.config.channel import get_channel_manager
         from omg_cli.config.role import get_role_manager
 
         self.channel_name = channel_name
+        self.session_id = session_id or str(uuid4())
+        self._session_storage = session_storage or ChannelSessionStorage()
+        self._session_metadata = SessionMetadata(
+            session_id=self.session_id,
+            chat_mode="channel",
+            workspace=Path.cwd(),
+        )
+        self._session_storage.save_metadata(self._session_metadata)
 
-        self.threads = list(threads if threads is not None else [Thread(id=0, title="Default Thread", description="")])
-        self.thread_map: dict[int, Thread] = {t.id: t for t in self.threads}
-
-        self.thread_roles: dict[int, dict[str, ThreadRoleContext]] = {
-            t.id: {r.name: self.role_contexts[r.name] for r in self.roles} for t in self.threads
-        }
+        self.roles = list(roles if roles is not None else get_role_manager().list_roles())
+        self.role_contexts: dict[str, ThreadRoleContext] = {}
+        self._bg_tasks: set[asyncio.Task] = set()
+        self._stalled_reminder_sent: set[int] = set()
+        self._spawn_thread_tool: Tool[Any] | None = None
 
         self.default_role_name = default_role_name
         if self.default_role_name is None:
             self.default_role_name = get_channel_manager().get_channel_default_role(channel_name)
 
-        self._setup_spawn_thread_tool()
-        self.initialize_default_role_context(provider=provider, system_prompt=system_prompt)
-        self._register_default_context_tools()
+        self.initialize_default_role_context()
 
-        self.roles = list(roles if roles is not None else get_role_manager().list_roles())
-        self.role_contexts: dict[str, ThreadRoleContext] = {}
+        self.threads = list(threads if threads is not None else [Thread(id=0, title="Default Thread", description="")])
+        self.thread_map: dict[int, Thread] = {t.id: t for t in self.threads}
+
         for role in self.roles:
             self.initialize_role_context(role)
 
-        self._bg_tasks: set[asyncio.Task] = set()
-        self._stalled_reminder_sent: set[int] = set()
-        self._spawn_thread_tool: Tool[Any] | None = None
+        self.thread_roles: dict[int, dict[str, ThreadRoleContext]] = {
+            t.id: {r.name: self.role_contexts[r.name] for r in self.roles} for t in self.threads
+        }
+
+        self._persist_all_threads()
+
+        self._setup_spawn_thread_tool()
+        self._register_default_context_tools()
+
+    def _persist_thread(self, thread_id: int) -> None:
+        thread = self.thread_map.get(thread_id)
+        if thread is None:
+            return
+
+        self._session_storage.save_thread_metadata(self.session_id, ChannelThreadMetadata.from_thread(thread))
+        self._session_storage.save_messages(self.session_id, thread_id, thread.messages)
+
+    def _persist_all_threads(self) -> None:
+        for thread in self.threads:
+            self._persist_thread(thread.id)
+
+    def _persist_role_context(self, thread_id: int, role_name: str) -> None:
+        thread_roles = self.thread_roles.get(thread_id)
+        if thread_roles is None:
+            return
+
+        role_context = thread_roles.get(role_name)
+        if role_context is None:
+            return
+
+        self._session_storage.save_role_context(
+            self.session_id,
+            role_name,
+            thread_id,
+            {
+                "messages": [message.model_dump(mode="json") for message in role_context.messages],
+                "display_messages": [message.model_dump(mode="json") for message in role_context.display_messages],
+                "system_prompt": role_context.system_prompt,
+                "role_name": role_context.role.name,
+            },
+        )
 
     def initialize_role_context(self, role: Role) -> MetaContext:
         ctx = ThreadRoleContext(role=role)
@@ -290,6 +340,7 @@ class ChannelContext:
                             thread.messages.append(reminder)
                             await self.default_context._emit(ThreadMessageEvent(thread_id=thread_id, message=reminder))
                             self._stalled_reminder_sent.add(thread_id)
+                            self._persist_thread(thread_id)
                             assigned_roles = thread.assigned_role_names
                             if assigned_roles:
                                 self._dispatch_to_roles(thread_id, reminder, assigned_roles)
@@ -325,6 +376,7 @@ class ChannelContext:
                 )
             )
         await self.default_context._emit(ThreadMessageEvent(thread_id=thread_id, message=message))
+        self._persist_thread(thread_id)
 
         mentions = self._extract_mentions(content)
         if mentions:
@@ -346,11 +398,11 @@ class ChannelContext:
             description=description,
             assigned_role_names=list(assigned_role_names or []),
             reviewer_role_names=list(reviewer_role_names or []),
-            parent_thread_id=parent_thread_id,
         )
         self.threads.append(thread)
         self.thread_map[thread.id] = thread
         self.thread_roles[thread.id] = {r.name: self.role_contexts[r.name] for r in self.roles}
+        self._persist_thread(thread.id)
         return thread
 
     async def dispatch_to_thread(self, thread_id: int, message: Message) -> None:
@@ -374,9 +426,11 @@ class ChannelContext:
 
         assigned_roles = thread.assigned_role_names
         if not assigned_roles:
+            self._persist_thread(thread_id)
             return
 
         self._dispatch_to_roles(thread_id, message, assigned_roles)
+        self._persist_thread(thread_id)
 
     async def spawn_thread(
         self,
@@ -400,6 +454,7 @@ class ChannelContext:
         }
         for role_context in self.thread_roles[thread.id].values():
             self.fork_role_context_from_defaults(role_context)
+            self._persist_role_context(thread.id, role_context.role.name)
 
         first_message = self._generate_thread_first_message(thread)
         await self.dispatch_to_thread(thread.id, first_message)
@@ -528,7 +583,64 @@ After receiving the message, you **NEED** to cooperate with each other and divid
             ).bind(_update_thread_status)
         )
 
-    def initialize_default_role_context(self, provider: Any = None, system_prompt: str = "") -> None:
+    @classmethod
+    def from_session(
+        cls,
+        session_id: str,
+        *,
+        session_storage: ChannelSessionStorage | None = None,
+        roles: Sequence[Role] | None = None,
+    ) -> "ChannelContext":
+        from omg_cli.config.channel import get_channel_manager
+
+        storage = session_storage or ChannelSessionStorage()
+        metadata = storage.load_metadata(session_id)
+        if metadata is None:
+            raise ValueError(f"Session '{session_id}' not found")
+
+        default_role_name = get_channel_manager().get_channel_default_role(str(metadata.workspace))
+        if roles:
+            role_names = {role.name for role in roles}
+            if default_role_name not in role_names:
+                default_role_name = roles[0].name
+        if default_role_name is None:
+            raise ValueError(f"Session '{session_id}' cannot be restored without a default role")
+
+        threads_metadata = storage.list_thread_metadata(session_id)
+        threads: list[Thread] = []
+        for thread_metadata in threads_metadata:
+            thread = Thread(
+                id=thread_metadata.thread_id,
+                title=thread_metadata.title,
+                description=thread_metadata.description,
+                assigned_role_names=list(thread_metadata.assigned_role_names),
+                reviewer_role_names=list(thread_metadata.reviewer_role_names),
+                status=ThreadStatus(thread_metadata.status),
+                created_at=thread_metadata.created_at,
+            )
+            thread.messages = storage.load_messages(session_id, thread.id)
+            thread.role_activities = {}
+            threads.append(thread)
+
+        context = cls(
+            channel_name=str(metadata.workspace),
+            roles=roles,
+            threads=threads,
+            default_role_name=default_role_name,
+            session_id=session_id,
+            session_storage=storage,
+        )
+
+        for thread in context.threads:
+            thread.role_activities = {}
+            for role_name in context.thread_roles.get(thread.id, {}):
+                activities = storage.load_role_activities(session_id, role_name, thread.id)
+                if activities:
+                    thread.role_activities[role_name] = list(activities)
+
+        return context
+
+    def initialize_default_role_context(self) -> None:
         default_role = None
         if self.default_role_name:
             default_role = next((r for r in self.roles if r.name == self.default_role_name), None)
@@ -549,7 +661,7 @@ After receiving the message, you **NEED** to cooperate with each other and divid
             for tool_name in ("Shell", "WriteFile", "StrReplace"):
                 self.default_context.unregister_tool(tool_name)
         else:
-            self.default_context = ChatContext(provider=provider, system_prompt=system_prompt)
+            raise ValueError("Default role not found and cannot initialize default context")
 
         if old_context is not None:
             self.default_context._event_manager.copy_handlers_from(old_context._event_manager)
@@ -566,6 +678,7 @@ After receiving the message, you **NEED** to cooperate with each other and divid
         for thread in self.threads:
             self.thread_roles[thread.id] = {r.name: self.role_contexts[r.name] for r in self.roles}
         self.initialize_default_role_context()
+        self._persist_all_threads()
 
     def _setup_spawn_thread_tool(self) -> None:
         self._spawn_thread_tool = Tool(
@@ -609,9 +722,9 @@ After receiving the message, you **NEED** to cooperate with each other and divid
         thread = self.thread_map.get(thread_id)
         if thread is None:
             return
-        thread.role_activities.setdefault(role_name, []).append(
-            RoleActivityRecord(activity_type=activity_type, content=content)
-        )
+        record = RoleActivityRecord(activity_type=activity_type, content=content)
+        thread.role_activities.setdefault(role_name, []).append(record)
+        self._session_storage.append_role_activity(self.session_id, role_name, thread_id, record)
 
 
 class ThreadRoleContext(MetaContext):

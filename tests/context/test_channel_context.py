@@ -6,6 +6,7 @@ import pytest
 
 from omg_cli.abstract import ChatAdapter
 from omg_cli.config.adapter_manager import get_adapter_manager
+from omg_cli.config.session_storage import ChannelSessionStorage
 from omg_cli.context.role import ChannelContext
 from omg_cli.types.channel import Role
 from omg_cli.types.event import (
@@ -161,9 +162,7 @@ async def test_role_activity_persistence(sample_role: Role) -> None:
     channel.add_thread(title="Thread 1")
     token = _current_thread_id.set(1)
     try:
-        await channel.role_contexts["coder"]._emit(
-            SessionStatusEvent(detail="working...", level=StatusLevel.INFO)
-        )
+        await channel.role_contexts["coder"]._emit(SessionStatusEvent(detail="working...", level=StatusLevel.INFO))
     finally:
         _current_thread_id.reset(token)
 
@@ -195,9 +194,7 @@ async def test_role_activity_debug_filtered(sample_role: Role) -> None:
     channel.add_thread(title="Thread 1")
     token = _current_thread_id.set(1)
     try:
-        await channel.role_contexts["coder"]._emit(
-            SessionStatusEvent(detail="debug detail", level=StatusLevel.DEBUG)
-        )
+        await channel.role_contexts["coder"]._emit(SessionStatusEvent(detail="debug detail", level=StatusLevel.DEBUG))
     finally:
         _current_thread_id.reset(token)
 
@@ -206,3 +203,63 @@ async def test_role_activity_debug_filtered(sample_role: Role) -> None:
     assert "coder" not in thread.role_activities
 
 
+def test_channel_context_persists_thread_state(sample_role: Role, tmp_path) -> None:
+    storage = ChannelSessionStorage(config_dir=tmp_path)
+    channel = ChannelContext(
+        channel_name="test-channel",
+        roles=[sample_role],
+        default_role_name="coder",
+        session_id="channel-session",
+        session_storage=storage,
+    )
+
+    thread = channel.add_thread(title="Persisted Thread")
+    channel.record_role_activity(thread.id, "coder", "status", "working")
+
+    assert storage.load_metadata("channel-session") is not None
+
+    loaded_thread_metadata = storage.load_thread_metadata("channel-session", thread.id)
+    assert loaded_thread_metadata is not None
+    assert loaded_thread_metadata.title == "Persisted Thread"
+
+    thread_dir = tmp_path / "sessions" / "channel-session" / "threads" / str(thread.id)
+    assert (thread_dir / "metadata.json").exists()
+    assert (thread_dir / "messages.jsonl").exists()
+    assert (thread_dir / "coder_activity.json").exists()
+
+    loaded_activities = storage.load_role_activities("channel-session", "coder", thread.id)
+    assert len(loaded_activities) == 1
+    assert loaded_activities[0].activity_type == "status"
+    assert loaded_activities[0].content == "working"
+
+
+@pytest.mark.asyncio
+async def test_channel_context_from_session_restores_state(sample_role: Role, tmp_path) -> None:
+    storage = ChannelSessionStorage(config_dir=tmp_path)
+    original = ChannelContext(
+        channel_name="test-channel",
+        roles=[sample_role],
+        default_role_name="coder",
+        session_id="restore-session",
+        session_storage=storage,
+    )
+
+    thread = original.add_thread(title="Restore Thread")
+    await original.send_message(thread.id, "coder", "hello @coder")
+    original.record_role_activity(thread.id, "coder", "status", "working")
+
+    restored = ChannelContext.from_session(
+        "restore-session",
+        session_storage=storage,
+        roles=[sample_role],
+    )
+
+    assert restored.session_id == "restore-session"
+    assert restored.channel_name == str(Path.cwd())
+    assert thread.id in restored.thread_map
+
+    restored_thread = restored.thread_map[thread.id]
+    assert restored_thread.title == "Restore Thread"
+    assert [message.text for message in restored_thread.messages] == ["hello @coder"]
+    assert restored_thread.role_activities["coder"][0].activity_type == "status"
+    assert restored_thread.role_activities["coder"][0].content == "working"

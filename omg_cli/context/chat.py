@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from omg_cli.config import SessionMetadata
-from omg_cli.config.session_storage import SessionStorage
+from omg_cli.config.session_storage import ChatSessionStorage
 from omg_cli.context.command import CommandProtocol
 from omg_cli.context.meta import MetaContext, Notifier, tool_call_to_message
 from omg_cli.context.tool_manager import ToolConfirmationDecision, ToolManagerProtocol
@@ -41,7 +41,7 @@ class ChatContext(MetaContext):
             workspace=Path.cwd(),
             model_name=self.provider.model_name,
         )
-        self._session_storage = SessionStorage()
+        self._session_storage = ChatSessionStorage()
         self._session_storage.save_metadata(self._session_metadata)
 
     async def append(self, message: Message, display: bool = True) -> None:

@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 
 from omg_cli.abstract.none import NoneAdapter
 from omg_cli.config import get_adapter_manager
+from omg_cli.config.session_storage import ChatSessionStorage
 from omg_cli.context import ChatContext
 from omg_cli.gui import run_gui
 from omg_cli.log import logger
@@ -89,36 +90,59 @@ def main(argv: list[str] | None = None):
         logger.info("未配置任何模型，请先使用 /import 命令导入模型")
         adapter = NoneAdapter()
 
-    if args.channel:
-        from omg_cli.context.role import ChannelContext
+    channel_mode = args.channel
 
-        context = ChannelContext(
-            channel_name=str(Path.cwd()),
-            provider=adapter,
-            system_prompt=render_system_prompt(Path.cwd()),
-        )
-    else:
-        context = ChatContext(
-            provider=adapter,
-            system_prompt=render_system_prompt(Path.cwd()),
-        )
-
-    # Restore previous session if session ID is provided
+    # Restore previous session if session ID is provided.
     if args.session_id:
-        from omg_cli.context.role import ChannelContext
-
-        chat_ctx = context.default_context if isinstance(context, ChannelContext) else context
-        if not chat_ctx.load_session(args.session_id):
+        metadata = ChatSessionStorage().load_metadata(args.session_id)
+        if metadata is None:
             logger.error(f"错误: 未找到会话 '{args.session_id}'")
             sys.exit(1)
-        logger.info(f"已恢复会话: {args.session_id}")
+
+        if metadata.chat_mode == "channel":
+            from omg_cli.context.role import ChannelContext
+
+            try:
+                context = ChannelContext.from_session(args.session_id)
+            except ValueError as exc:
+                detail = str(exc)
+                if "without a default role" in detail:
+                    logger.error(f"错误: Channel 会话 '{args.session_id}' 缺少可用角色，无法恢复")
+                elif "not found" in detail:
+                    logger.error(f"错误: 未找到会话 '{args.session_id}'")
+                else:
+                    logger.error(f"错误: Channel 会话 '{args.session_id}' 数据损坏，无法恢复")
+                sys.exit(1)
+            channel_mode = True
+            logger.info(f"已恢复 Channel 会话: {args.session_id}")
+        else:
+            context = ChatContext(
+                provider=adapter,
+                system_prompt=render_system_prompt(Path.cwd()),
+            )
+            if not context.load_session(args.session_id):
+                logger.error(f"错误: 未找到会话 '{args.session_id}'")
+                sys.exit(1)
+            logger.info(f"已恢复会话: {args.session_id}")
+    else:
+        if channel_mode:
+            from omg_cli.context.role import ChannelContext
+
+            context = ChannelContext(
+                channel_name=str(Path.cwd()),
+            )
+        else:
+            context = ChatContext(
+                provider=adapter,
+                system_prompt=render_system_prompt(Path.cwd()),
+            )
 
     if args.gui:
-        run_gui(context=context, channel=args.channel)
+        run_gui(context=context, channel=channel_mode)
         return
 
     # Run TUI (this will block until app exits)
-    run_terminal(context, channel=args.channel)
+    run_terminal(context, channel=channel_mode)
 
 
 if __name__ == "__main__":

@@ -50,7 +50,6 @@ class Thread(BaseModel):
     reviewer_role_names: list[str] = Field(default_factory=list)
     status: ThreadStatus = ThreadStatus.DRAFT
     created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
-    parent_thread_id: int | None = None
     role_activities: dict[str, list[RoleActivityRecord]] = Field(default_factory=dict)
 
 
@@ -86,7 +85,6 @@ class Channel(BaseModel):
             description=description,
             assigned_role_names=list(assigned_role_names or []),
             reviewer_role_names=list(reviewer_role_names or []),
-            parent_thread_id=parent_thread_id,
         )
         self.threads.append(thread)
         return thread
