@@ -90,11 +90,6 @@ class ChannelContext:
 
         self.channel_name = channel_name
 
-        self.roles = list(roles if roles is not None else get_role_manager().list_roles())
-        self.role_contexts: dict[str, ThreadRoleContext] = {}
-        for role in self.roles:
-            self.initialize_role_context(role)
-
         self.threads = list(threads if threads is not None else [Thread(id=0, title="Default Thread", description="")])
         self.thread_map: dict[int, Thread] = {t.id: t for t in self.threads}
 
@@ -106,14 +101,20 @@ class ChannelContext:
         if self.default_role_name is None:
             self.default_role_name = get_channel_manager().get_channel_default_role(channel_name)
 
-        self._bg_tasks: set[asyncio.Task] = set()
-        self._stalled_reminder_sent: set[int] = set()
-        self._spawn_thread_tool: Tool[Any] | None = None
         self._setup_spawn_thread_tool()
         self.initialize_default_role_context(provider=provider, system_prompt=system_prompt)
         self._register_default_context_tools()
 
-    def initialize_role_context(self, role: Role) -> None:
+        self.roles = list(roles if roles is not None else get_role_manager().list_roles())
+        self.role_contexts: dict[str, ThreadRoleContext] = {}
+        for role in self.roles:
+            self.initialize_role_context(role)
+
+        self._bg_tasks: set[asyncio.Task] = set()
+        self._stalled_reminder_sent: set[int] = set()
+        self._spawn_thread_tool: Tool[Any] | None = None
+
+    def initialize_role_context(self, role: Role) -> MetaContext:
         ctx = ThreadRoleContext(role=role)
 
         async def _forward_role_event(event: BaseEvent) -> None:
@@ -235,6 +236,8 @@ class ChannelContext:
         )
 
         self.role_contexts[role.name] = ctx
+
+        return ctx
 
     @staticmethod
     def _extract_mentions(content: str) -> list[str]:
@@ -395,6 +398,9 @@ class ChannelContext:
         self.thread_roles[thread.id] = {
             r.name: self.role_contexts[r.name] for r in self.roles if r.name in filtered_roles
         }
+        for role_context in self.thread_roles[thread.id].values():
+            self.fork_role_context_from_defaults(role_context)
+
         first_message = self._generate_thread_first_message(thread)
         await self.dispatch_to_thread(thread.id, first_message)
 
@@ -575,6 +581,9 @@ After receiving the message, you **NEED** to cooperate with each other and divid
         if self._spawn_thread_tool is None:
             raise RuntimeError("spawn_thread_tool has not been initialized")
         return self._spawn_thread_tool
+
+    def fork_role_context_from_defaults(self, role: MetaContext) -> None:
+        role.messages.extend(self.default_context.messages)
 
     def _spawn(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
