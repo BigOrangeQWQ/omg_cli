@@ -81,7 +81,7 @@ class MetaApp(App):
                 yield CommandPalette()
                 yield PendingMessagesDisplay(id="pending-messages")
                 yield Vertical(id="approval-container")
-                yield ComposerTextArea(placeholder="输入消息，Enter 发送，Ctrl+Enter 换行，/ 查看命令……")
+                yield ComposerTextArea(placeholder="输入需求，Enter 发送，Ctrl+Enter 换行，/ 查看命令……")
         yield ContextFooter()
 
     async def on_mount(self) -> None:
@@ -111,9 +111,7 @@ class MetaApp(App):
             )
             if modal_widgets:
                 # Allow ThreadListView to handle ctrl+c as dismiss
-                if event.key == "ctrl+c" and any(
-                    w.__class__.__name__ == "ThreadListView" for w in modal_widgets
-                ):
+                if event.key == "ctrl+c" and any(w.__class__.__name__ == "ThreadListView" for w in modal_widgets):
                     return
                 event.stop()
                 if event.key == "ctrl+c":
