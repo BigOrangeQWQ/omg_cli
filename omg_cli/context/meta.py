@@ -334,13 +334,17 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
             current_thinking_content = ""
             current_thinking_signature: str | None = None
 
+            optional_kwargs: dict[str, Any] = {}
+            if self.thinking_mode and self.provider.thinking_supported:
+                optional_kwargs["thinking"] = True
+            if self.skills and self.provider.type == "anthropic":
+                optional_kwargs["skills"] = self.skills
             streaming: AsyncIterator[MessageStreamDeltaEvent | MessageStreamCompleteEvent] = self.provider.stream(
                 system_prompt=system_prompt,
                 messages=current_conversation_round,
                 tools=tools,
                 max_tokens=max_tokens,
-                thinking=True if self.thinking_mode else False,
-                skills=self.skills if self.skills else None,
+                **optional_kwargs,
             )
             async for event in streaming:
                 # Check for interrupt request
