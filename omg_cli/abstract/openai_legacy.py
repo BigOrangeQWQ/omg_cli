@@ -16,6 +16,7 @@ from openai.types.chat import (
     ChatCompletionMessageParam,
     ChatCompletionMessageToolCallUnionParam,
     ChatCompletionSystemMessageParam,
+    ChatCompletionToolMessageParam,
     ChatCompletionUserMessageParam,
 )
 from openai.types.chat.chat_completion_chunk import (
@@ -42,6 +43,7 @@ from omg_cli.types.message import (
     ToolCall,
     ToolCallDetailSegment,
     ToolCallFunctionBody,
+    ToolResultSegment,
     ToolSegment,
     UsageSegment,
 )
@@ -393,7 +395,7 @@ class OpenAILegacy(ChatAdapter):
         for choice_index, text_parts in text_buffers.items():
             if choice_index in completed_text_choices:
                 continue
-            text = "".join(text_parts)
+            text: str = "".join(text_parts)
             if not text:
                 continue
             yield MessageStreamCompleteEvent(
@@ -404,7 +406,7 @@ class OpenAILegacy(ChatAdapter):
             )
 
         for (choice_index, tool_index), state in tool_states.items():
-            tool_key = (choice_index, tool_index)
+            tool_key: tuple[int, int] = (choice_index, tool_index)
             if tool_key in completed_tools:
                 continue
             if not state["name"]:
@@ -485,6 +487,20 @@ def to_openai_messages(message: ChatMessage) -> list[ChatCompletionMessageParam]
             completion_messsages.append(assistant_message)  # type: ignore[arg-type]
         case "system":
             completion_messsages.append(ChatCompletionSystemMessageParam(role="system", content=message.text))
+        case "tool":
+            tool_segment = next(
+                (segment for segment in message.content if isinstance(segment, ToolResultSegment)),
+                None,
+            )
+            if tool_segment is None:
+                raise ValueError("Tool messages must include a ToolResultSegment with the originating tool_call_id")
+            completion_messsages.append(
+                ChatCompletionToolMessageParam(
+                    role="tool",
+                    tool_call_id=tool_segment.tool_call_id,
+                    content=str(tool_segment.content),
+                )
+            )
 
     return completion_messsages
 
@@ -522,16 +538,16 @@ def to_openai_response_input(message: ChatMessage) -> list[dict[str, Any]]:
                 )
         case "tool":
             tool_segment = next(
-                (segment for segment in message.content if isinstance(segment, ToolSegment)),
+                (segment for segment in message.content if isinstance(segment, ToolResultSegment)),
                 None,
             )
             if tool_segment is None:
-                raise ValueError("Tool messages must include a ToolSegment with the originating tool_call_id")
+                raise ValueError("Tool messages must include a ToolResultSegment with the originating tool_call_id")
             response_items.append(
                 {
                     "type": "function_call_output",
                     "call_id": tool_segment.tool_call_id,
-                    "output": message.text,
+                    "output": str(tool_segment.content),
                 }
             )
     return response_items
