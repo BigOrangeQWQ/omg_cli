@@ -87,7 +87,7 @@ class ChatTerminalApp(App):
                 yield CommandPalette()
                 yield PendingMessagesDisplay(id="pending-messages")
                 yield Vertical(id="approval-container")
-                yield ComposerTextArea(placeholder="输入消息，Enter 发送，Ctrl+Enter 换行，/ 查看命令……")
+                yield ComposerTextArea(placeholder="输入需求，Enter 发送，Ctrl+Enter 换行，/ 查看命令……")
         yield ContextFooter()
 
     async def on_mount(self) -> None:
