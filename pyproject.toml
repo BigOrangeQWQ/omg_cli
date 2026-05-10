@@ -31,7 +31,11 @@ dependencies = [
 omg-cli = "omg_cli.__main__:main"
 
 [dependency-groups]
-dev = ["pytest>=8.4.2", "pytest-asyncio>=1.3.0"]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.3.0",
+    "ruff>=0.15.12",
+]
 
 [tool.uv]
 package = true

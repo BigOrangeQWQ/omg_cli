@@ -81,9 +81,15 @@ class ChatContext(MetaContext):
 
         await super().reset()
 
-    async def compact_context(self, keep_recent: int = RECENT_MESSAGES_TO_KEEP) -> str | None:
-        await super().compact_context(keep_recent=keep_recent)
+    async def compact_context(
+        self,
+        keep_recent: int = RECENT_MESSAGES_TO_KEEP,
+        ranges: list[tuple[int, int]] | None = None,
+        focus: str = "",
+    ) -> str | None:
+        result = await super().compact_context(keep_recent=keep_recent, ranges=ranges, focus=focus)
         self._session_storage.save_messages(self.session_id, self.messages)
+        return result
 
     def interrupt(self) -> None:
         self._interrupt_requested = True
