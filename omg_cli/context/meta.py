@@ -43,12 +43,14 @@ from omg_cli.types.message import (
     UsageSegment,
 )
 from omg_cli.types.skill import SkillRef
-from omg_cli.types.tool import Tool, ToolError
+from omg_cli.types.tool import Tool
 from omg_cli.types.usage import TokenUsage
 
 SUB_ROUNDS_LIMIT = 10
 RESERVED_TOKENS = 50_000
 RECENT_MESSAGES_TO_KEEP = 4
+COMPACT_THRESHOLD_PERCENT = 85.0  # Trigger compact when context usage reaches 85%
+MAX_TOOL_RESULT_LENGTH = 30000  # ~8K-10K tokens, truncate longer tool outputs
 
 
 type ListenerRegistration = Callable[..., None | AsyncIterator[None]]
@@ -152,6 +154,10 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
         # Message queue for pending user inputs during LLM thinking
         self._message_queue: list[Message] = []
 
+        # Pending compact ranges: list of (start_idx, end_idx) for completed tasks
+        # These ranges will be compacted in the next batch compact operation
+        self._pending_compact_ranges: list[tuple[int, int]] = []
+
         # Setup tools
         self._setup_tools(tools or [])
         for tool in TOOL_LIST:
@@ -232,51 +238,147 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
 
         await self._emit(SessionMessageEvent(message=message))
 
-    async def compact_context(self, keep_recent: int = RECENT_MESSAGES_TO_KEEP) -> str | None:
-        if len(self.messages) < keep_recent + 1:
+    async def compact_context(
+        self,
+        keep_recent: int = RECENT_MESSAGES_TO_KEEP,
+        ranges: list[tuple[int, int]] | None = None,
+        focus: str = "",
+    ) -> str | None:
+        """Compact conversation context by summarizing older messages.
+
+        Args:
+            keep_recent: Number of most recent messages to preserve verbatim.
+            ranges: Optional list of (start, end) index pairs to compact specific ranges.
+                    If provided, only these ranges are compacted; keep_recent is ignored.
+            focus: Optional focus hint to guide the summarization (e.g., task description).
+        """
+        if ranges:
+            # Compact specific ranges (used for pending task compaction)
+            return await self._compact_ranges(ranges, focus=focus)
+
+        # Default: compact all messages except keep_recent most recent
+        if len(self.messages) <= keep_recent + 1:
             return "Not enough messages to compact"
 
-        logger.info(f"Compacting context: {len(self.messages)} messages, keeping {keep_recent} recent")
+        old_count = len(self.messages)
+        logger.info(f"Compacting context: {old_count} messages, keeping {keep_recent} recent")
 
-        # Build context text for summarization
+        # Split messages into: to_compact | to_keep
+        to_compact = self.messages[:-keep_recent]
+        to_keep = self.messages[-keep_recent:]
+
+        summary_text = await self._generate_summary(to_compact, focus=focus)
+
+        # Reset messages with summary + kept messages
+        self.messages = []
+        if summary_text:
+            summary_msg = Message(
+                role="assistant",
+                name=self.provider.model_name,
+                content=[TextSegment(text=summary_text)],
+            )
+            await self.append(summary_msg, display=False)
+
+        for msg in to_keep:
+            await self.append(msg, display=False)
+
+        new_count = len(self.messages)
+        result_msg = f"Context compacted: {old_count} -> {new_count} messages"
+        logger.success(result_msg)
+        await self._emit(SessionCompactedEvent())
+        return summary_text
+
+    async def _compact_ranges(self, ranges: list[tuple[int, int]], focus: str = "") -> str | None:
+        """Compact specific message ranges, replacing each range with a summary."""
+        if not ranges:
+            return None
+
+        # Sort ranges by start index, merge overlapping ranges
+        sorted_ranges = sorted(ranges, key=lambda x: x[0])
+        merged_ranges: list[tuple[int, int]] = []
+        for start, end in sorted_ranges:
+            if merged_ranges and start <= merged_ranges[-1][1]:
+                merged_ranges[-1] = (merged_ranges[-1][0], max(merged_ranges[-1][1], end))
+            else:
+                merged_ranges.append((start, end))
+
+        # Build new messages list, replacing compacted ranges with summaries
+        new_messages: list[Message] = []
+        last_end = 0
+        total_compacted = 0
+
+        for start, end in merged_ranges:
+            # Append messages before this range
+            new_messages.extend(self.messages[last_end:start])
+            # Compact this range
+            range_messages = self.messages[start:end]
+            range_focus = f"Task summary ({start}-{end})"
+            if focus:
+                range_focus = f"{focus}: {range_focus}"
+            summary = await self._generate_summary(range_messages, focus=range_focus)
+            if summary:
+                summary_msg = Message(
+                    role="assistant",
+                    name=self.provider.model_name,
+                    content=[TextSegment(text=f"[Compacted: {summary}]")],
+                )
+                new_messages.append(summary_msg)
+            total_compacted += end - start
+            last_end = end
+
+        # Append remaining messages after last range
+        new_messages.extend(self.messages[last_end:])
+
+        old_count = len(self.messages)
+        self.messages = new_messages
+        new_count = len(self.messages)
+
+        result_msg = f"Range compact: {old_count} -> {new_count} messages ({total_compacted} compacted)"
+        logger.success(result_msg)
+        await self._emit(SessionCompactedEvent())
+        return result_msg
+
+    async def _generate_summary(self, messages: list[Message], focus: str = "") -> str:
+        """Generate a summary for the given messages using LLM."""
         context_parts = []
-        for msg in self.messages:
+        for msg in messages:
             role_display = f"assistant ({msg.name})" if msg.name else msg.role
             content_text = " ".join(str(segment) for segment in msg.content)
             context_parts.append(f"**{role_display}**: {content_text}\n")
         context_text = "\n".join(context_parts)
 
-        self.token_usage.input_tokens = 0
-        self.token_usage.output_tokens = 0
+        compact_prompt = COMPACT_MD.format(CONTEXT=context_text, RECENT_MESSAGES_TO_KEEP=RECENT_MESSAGES_TO_KEEP)
+        if focus:
+            compact_prompt = f"Focus: {focus}\n\n{compact_prompt}"
 
         try:
             assistant_messages, _ = await self.thinking(
                 system_prompt=self.system_prompt,
                 messages=[
-                    *self.messages,
-                    TextSegment(
-                        text=COMPACT_MD.format(CONTEXT=context_text, RECENT_MESSAGES_TO_KEEP=keep_recent)
-                    ).to_user_message(),
+                    *messages,
+                    TextSegment(text=compact_prompt).to_user_message(),
                 ],
                 tools=self.tools,
                 display=False,
             )
-            self.messages = []
             summary_text = ""
             for msg in assistant_messages:
-                await self.append(msg, display=False)
                 summary_text += msg.text
+            return summary_text
         except Exception as exc:
             logger.error(f"LLM summarization failed: {exc}")
-            raise ToolError(f"Context compaction failed: {exc}")
+            return ""
 
-        old_count = len(self.messages)
+    def _mark_pending_compact(self, end_index: int) -> None:
+        """Mark messages from last compact point to end_index as pending for compaction."""
+        # Find the start of the last pending range or the end of the last compacted range
+        start_index = 0
+        if self._pending_compact_ranges:
+            start_index = self._pending_compact_ranges[-1][1]
 
-        result_msg = f"Context compacted: {old_count} -> {len(self.messages)} messages. "
-        logger.success(result_msg)
-
-        await self._emit(SessionCompactedEvent())
-        return summary_text
+        if start_index < end_index:
+            self._pending_compact_ranges.append((start_index, end_index))
+            logger.debug(f"Marked pending compact range: {start_index}-{end_index}")
 
     async def thinking(
         self,
@@ -459,9 +561,14 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
             await self.logger.debug(f"Assistant request started: {self.provider.model_name}")
             logger.debug(f"Current token usage before request: {self.token_usage}")
 
-            # Auto-compact context if remaining space drops below 25%
-            if self.token_usage.max_context_size > 0 and self.token_usage.remaining_usage <= 25.0:
-                await self.compact_context()
+            # Auto-compact context if usage exceeds threshold (85%)
+            # First try to compact pending task ranges, then fall back to full compact
+            if self.token_usage.max_context_size > 0 and self.token_usage.context_usage >= COMPACT_THRESHOLD_PERCENT:
+                if self._pending_compact_ranges:
+                    await self.compact_context(ranges=self._pending_compact_ranges)
+                    self._pending_compact_ranges.clear()
+                else:
+                    await self.compact_context()
 
             provider_kwargs = dict(kwargs)
             max_tokens = provider_kwargs.pop("max_tokens", None)
@@ -510,6 +617,12 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
             _input_messages: list[Message] = input_messages  # type: ignore
 
         for message in _input_messages:
+            # Phase 1: Mark pending on every new user message (simple but effective).
+            # Phase 2 will introduce embedding-based semantic similarity for
+            # more accurate task boundary detection.
+            if message.role == "user":
+                self._mark_pending_compact(len(self.messages))
+
             self._message_queue.append(message)
 
         if not self.token_usage.initial_context_size:
@@ -522,16 +635,29 @@ class MetaContext(ABC, CommandProtocol, ToolManagerProtocol, MCPManagerProtocol,
         raise NotImplementedError
 
 
+def _truncate_tool_result(result_str: str, max_length: int = MAX_TOOL_RESULT_LENGTH) -> str:
+    """Truncate long tool results, preserving head and tail with indicator."""
+    if len(result_str) <= max_length:
+        return result_str
+
+    head_len = max_length // 2
+    tail_len = max_length // 4
+    omitted = len(result_str) - head_len - tail_len
+
+    return f"{result_str[:head_len]}\n\n... [{omitted} characters truncated] ...\n\n{result_str[-tail_len:]}"
+
+
 def tool_call_to_message(tool_call: ToolCall, result: Any) -> Message:
     if result is None:
         _serialize_tool_result = ""
     elif isinstance(result, str):
-        _serialize_tool_result = result
+        _serialize_tool_result = _truncate_tool_result(result)
     else:
         try:
             _serialize_tool_result = json.dumps(result, ensure_ascii=False, default=str)
         except TypeError:
             _serialize_tool_result = str(result)
+        _serialize_tool_result = _truncate_tool_result(_serialize_tool_result)
 
     return Message(
         role="tool",

@@ -3,28 +3,60 @@ from omg_cli.types.skill import normalize_skill_id
 
 
 async def compact_context(ctx: ChatContext, args: str) -> None:
-    """Compact conversation context by summarizing older messages. Usage: /compact [keep_recent]"""
+    """Compact conversation context. Usage: /compact [keep_recent|focus]"""
     keep_recent = 4  # Default value
+    focus = ""
+
     if args.strip():
+        # Try to parse as integer first (keep_recent)
         try:
             keep_recent = int(args.strip())
             if keep_recent < 1:
                 await ctx.logger.error("参数错误: keep_recent 必须大于 0")
                 return
         except ValueError:
-            await ctx.logger.error("用法: /compact [保留消息数]")
-            return
+            # Treat as focus string
+            focus = args.strip()
 
     await ctx.logger.info("正在压缩上下文...")
 
     try:
-        result = await ctx.compact_context(keep_recent=keep_recent)
+        # If there are pending ranges, compact them first
+        if ctx._pending_compact_ranges:
+            result = await ctx.compact_context(ranges=ctx._pending_compact_ranges, focus=focus)
+            ctx._pending_compact_ranges.clear()
+        else:
+            result = await ctx.compact_context(keep_recent=keep_recent, focus=focus)
+
         if result is None:
             await ctx.logger.info("消息数量不足，无需压缩")
         else:
             await ctx.logger.success("上下文压缩完成")
     except Exception as e:
         await ctx.logger.error(f"压缩失败: {e}")
+
+
+async def next_task(ctx: ChatContext, args: str) -> None:
+    """Mark current task as complete and compact its context. Usage: /next [focus]"""
+    focus = args.strip()
+
+    # Mark current messages as pending for compaction
+    ctx._mark_pending_compact(len(ctx.messages))
+
+    await ctx.logger.info("正在归档当前任务...")
+
+    try:
+        if ctx._pending_compact_ranges:
+            result = await ctx.compact_context(ranges=ctx._pending_compact_ranges, focus=focus)
+            ctx._pending_compact_ranges.clear()
+            if result:
+                await ctx.logger.success("任务已归档")
+            else:
+                await ctx.logger.info("无需归档")
+        else:
+            await ctx.logger.info("没有可归档的任务")
+    except Exception as e:
+        await ctx.logger.error(f"归档失败: {e}")
 
 
 async def switch_model(ctx: ChatContext, args: str) -> None:
@@ -286,6 +318,12 @@ def register_commands(ctx: ChatContext) -> None:
             description="Compact conversation context by summarizing older messages",
             description_zh="压缩上下文，总结较早的消息",
             handler=compact_context,
+        ),
+        MetaCommand(
+            name="next",
+            description="Mark current task as complete and compact its context",
+            description_zh="标记当前任务完成并归档上下文",
+            handler=next_task,
         ),
     ]
 

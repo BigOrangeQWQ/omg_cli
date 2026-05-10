@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from omg_cli.config.role import RoleManager, get_role_manager
 from omg_cli.config.session_storage import ChannelSessionStorage, ChannelThreadMetadata, SessionMetadata
 from omg_cli.context.chat import ChatContext
-from omg_cli.context.meta import MetaContext, tool_call_to_message
+from omg_cli.context.meta import COMPACT_THRESHOLD_PERCENT, MetaContext, tool_call_to_message
 from omg_cli.log import logger
 from omg_cli.prompts import (
     render_plan_prompt,
@@ -765,6 +765,24 @@ class ThreadRoleContext(MetaContext):
         await self.logger.info(f"🤖 {self.role.name} 开始处理...")
         self._round_has_effect = False
         await super().round(**kwargs)
+
+        # Auto-compact role context when returning to main thread
+        # This keeps role contexts manageable in multi-role Channel mode
+        if self._pending_compact_ranges:
+            try:
+                await self.compact_context(
+                    ranges=self._pending_compact_ranges,
+                    focus=f"{self.role.name} 的任务摘要",
+                )
+                self._pending_compact_ranges.clear()
+            except Exception:
+                logger.opt(exception=True).warning(f"Role {self.role.name} auto-compact failed")
+        elif self.token_usage.max_context_size > 0 and self.token_usage.context_usage >= COMPACT_THRESHOLD_PERCENT:
+            try:
+                await self.compact_context()
+            except Exception:
+                logger.opt(exception=True).warning(f"Role {self.role.name} threshold compact failed")
+
         await self.logger.info(f"🤖 {self.role.name} 处理完成")
 
     async def _run_single_tool_call(self, tool_call: ToolCall) -> Message:
