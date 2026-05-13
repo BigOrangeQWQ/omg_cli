@@ -25,6 +25,7 @@ class ModelConfig(BaseModel):
     base_url: str
     api_key: SecretStr = Field(description="API key (protected by filesystem permissions)")
     thinking_supported: bool = False
+    flash: bool = Field(default=False, description="轻量模型，用于低消耗任务（如 toolcall compact）")
     max_context: int | None = None
     skills: list[str] = Field(default_factory=list, description="Anthropic skill IDs to enable by default")
 

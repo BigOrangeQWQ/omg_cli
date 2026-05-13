@@ -52,6 +52,16 @@ class AdapterManager:
             return None
         return self.get_adapter(model_config.name)
 
+    def get_flash_adapter(self) -> ChatAdapter | None:
+        """Get adapter for a flash (lightweight) model.
+
+        Returns None if no flash model is configured.
+        """
+        model_config = self._config_manager.get_flash_model()
+        if model_config is None:
+            return None
+        return self.get_adapter(model_config.name)
+
 
 @lru_cache(maxsize=1)
 def get_adapter_manager() -> AdapterManager:

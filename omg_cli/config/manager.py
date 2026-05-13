@@ -178,6 +178,16 @@ class ConfigManager:
         self.save_user_config(user_config)
         return True
 
+    def get_flash_model(self) -> ModelConfig | None:
+        """Get the first flash (lightweight) model for low-cost tasks.
+
+        Returns None if no flash model is configured.
+        """
+        for m in self.list_models():
+            if m.flash:
+                return m
+        return None
+
     # ------------------------------------------------------------------
     # MCP Servers (TOML format, Codex-compatible)
     # ------------------------------------------------------------------

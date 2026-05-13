@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     CardWidget,
+    CheckBox,
     ComboBox,
     EditableComboBox,
     LineEdit,
@@ -130,6 +131,11 @@ class ImportModelInterface(QWidget):
         self.custom_name_input.setPlaceholderText(self.tr("留空使用模型名称"))
         form_layout.addWidget(self.custom_name_input)
 
+        # Flash model checkbox
+        self.flash_checkbox = CheckBox(self.tr("清亮模型（用于轻量任务，如 compact toolcall）"), form_card)
+        self.flash_checkbox.setChecked(False)
+        form_layout.addWidget(self.flash_checkbox)
+
         # Error label
         self.error_label = BodyLabel("", form_card)
         self.error_label.setWordWrap(True)
@@ -172,6 +178,7 @@ class ImportModelInterface(QWidget):
         self.model_name_input.setText("")
         self.max_context_input.setText("150000")
         self.custom_name_input.setText("")
+        self.flash_checkbox.setChecked(False)
         self.error_label.hide()
 
     def _on_import_clicked(self) -> None:
@@ -185,6 +192,7 @@ class ImportModelInterface(QWidget):
         api_key = self.api_key_input.text().strip()
         model_name = self.model_name_input.text().strip()
         max_context_str = self.max_context_input.text().strip()
+        flash = self.flash_checkbox.isChecked()
         custom_name = self.custom_name_input.text().strip()
 
         if not base_url:
@@ -246,6 +254,7 @@ class ImportModelInterface(QWidget):
             base_url=base_url,
             api_key=SecretStr(api_key),
             thinking_supported=thinking_supported,
+            flash=flash,
             max_context=max_context,
         )
 
