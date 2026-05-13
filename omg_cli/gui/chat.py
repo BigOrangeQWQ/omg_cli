@@ -16,10 +16,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from qfluentwidgets import (
+    Action,
     BodyLabel,
     CaptionLabel,
     CardWidget,
+    DropDownPushButton,
     PrimaryPushButton,
+    RoundMenu,
     ScrollArea,
     StrongBodyLabel,
     TextBrowser,
@@ -32,6 +35,7 @@ from qfluentwidgets import (
     TextEdit as FluentTextEdit,
 )
 
+from omg_cli.config import get_config_manager
 from omg_cli.context.chat import ChatContext
 from omg_cli.context.tool_manager import ToolConfirmationDecision
 from omg_cli.log import logger
@@ -87,9 +91,9 @@ class AutoHeightTextBrowser(TextBrowser):
         self.document().contentsChanged.connect(self._adjust_height)
         # Force transparent background for all states to prevent hover/focus highlight
         self.setStyleSheet(
-            "TextBrowser { border: none; background: transparent; color: rgb(255, 255, 255); }\n"
-            "TextBrowser:hover { background: transparent; color: rgb(255, 255, 255); }\n"
-            "TextBrowser:focus { background: transparent; border: none; color: rgb(255, 255, 255); }"
+            "TextBrowser { border: none; background: transparent; color: rgb(33, 37, 41); }\n"
+            "TextBrowser:hover { background: transparent; color: rgb(33, 37, 41); }\n"
+            "TextBrowser:focus { background: transparent; border: none; color: rgb(33, 37, 41); }"
         )
         self._adjust_height()
 
@@ -547,6 +551,7 @@ class MessageItem(QWidget):
     """Wrapper that aligns the bubble left, right, or center depending on role."""
 
     BUBBLE_WIDTH_RATIO = 0.72
+    USER_BUBBLE_MIN_WIDTH = 120
     BUBBLE_MAX_WIDTH = 980
     BUBBLE_MIN_WIDTH = 220
 
@@ -589,8 +594,12 @@ class MessageItem(QWidget):
         if upper <= 0:
             return
 
-        target = min(int(available * self.BUBBLE_WIDTH_RATIO), self.BUBBLE_MAX_WIDTH, upper)
-        target = max(min(self.BUBBLE_MIN_WIDTH, upper), target)
+        if self._role == "user":
+            preferred_width = self._bubble.sizeHint().width()
+            target = min(max(preferred_width, self.USER_BUBBLE_MIN_WIDTH), self.BUBBLE_MAX_WIDTH, upper)
+        else:
+            target = min(int(available * self.BUBBLE_WIDTH_RATIO), self.BUBBLE_MAX_WIDTH, upper)
+            target = max(min(self.BUBBLE_MIN_WIDTH, upper), target)
 
         self._bubble.setFixedWidth(target)
 
@@ -613,7 +622,7 @@ class ChatInterface(QWidget):
         super().__init__(parent=parent)
 
         self.setObjectName("chatInterface")
-        self.setStyleSheet("ChatInterface { background-color: #151515; }")
+        self.setStyleSheet("ChatInterface { background-color: #f5f6f8; }")
         self.context = context
         self._debug = debug
         self._is_processing = False
@@ -655,24 +664,40 @@ class ChatInterface(QWidget):
         input_layout.setContentsMargins(0, 0, 0, 0)
         input_layout.setSpacing(10)
 
+        self._model_menu = RoundMenu(parent=self)
+
         self.text_edit = InputMethodTextEdit(self)
-        self.text_edit.setPlaceholderText(self.tr("输入消息，Enter 发送，Ctrl+Enter 换行..."))
+        self.text_edit.setPlaceholderText(self.tr("输入需求，Enter 发送，Ctrl+Enter 换行..."))
         self.text_edit.setFixedHeight(80)
         self.text_edit.setFocusPolicy(Qt.StrongFocus)
         self.text_edit.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, True)
 
+        self.model_button = DropDownPushButton(self.tr("模型"), self)
+        self.model_button.setFixedSize(90, 32)
+        self.model_button.setStyleSheet("QPushButton { font-size: 11px; border: 0;}")
+        self.model_button.setMenu(self._model_menu)
+
         self.send_button = PrimaryPushButton(self.tr("发送"), self)
         self.send_button.setIcon(FIF.SEND)
-        self.send_button.setFixedSize(90, 80)
+        self.send_button.setFixedSize(90, 32)
+
+        self.button_column = QWidget(self.input_container)
+        button_column_layout = QVBoxLayout(self.button_column)
+        button_column_layout.setContentsMargins(0, 0, 0, 0)
+        button_column_layout.setSpacing(4)
+        button_column_layout.addWidget(self.model_button)
+        button_column_layout.addWidget(self.send_button)
 
         input_layout.addWidget(self.text_edit, stretch=1)
-        input_layout.addWidget(self.send_button, alignment=Qt.AlignBottom)
+        input_layout.addWidget(self.button_column, alignment=Qt.AlignBottom)
 
         self.main_layout.addWidget(self.input_container)
         QTimer.singleShot(0, self.text_edit.setFocus)
+        self._refresh_model_selector()
 
         # ---- Signals ----
         self.send_button.clicked.connect(self._on_send)
+        self.model_button.setMenu(self._model_menu)
         self.text_edit.installEventFilter(self)
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # type: ignore[name-defined]
@@ -726,6 +751,8 @@ class ChatInterface(QWidget):
 
         for msg in self.context.messages:
             self._add_message_bubble(msg)
+
+        self._refresh_model_selector()
 
     # -------------------------------------------------------------------------
     # User actions
@@ -811,6 +838,57 @@ class ChatInterface(QWidget):
             await self.logger.info(f"Tool call rejected: {tool.name}, reason: {result.reason}")
 
         return result
+
+    def _refresh_model_selector(self) -> None:
+        config_manager = get_config_manager()
+        models = config_manager.list_models()
+        current_model = config_manager.get_default_model()
+
+        self._model_menu.clear()
+
+        if self.context is None:
+            self.model_button.setText(self.tr("模型"))
+            self.model_button.setEnabled(False)
+            disabled_action = Action(self.tr("未连接上下文"), self)
+            disabled_action.setEnabled(False)
+            self._model_menu.addAction(disabled_action)
+            return
+
+        if not models:
+            self.model_button.setText(self.tr("模型"))
+            self.model_button.setEnabled(False)
+            disabled_action = Action(self.tr("未配置模型"), self)
+            disabled_action.setEnabled(False)
+            self._model_menu.addAction(disabled_action)
+            return
+
+        for model in models:
+            action = Action(
+                model.name,
+                self,
+                triggered=lambda checked=False, model_name=model.name: self._switch_model(model_name),
+            )
+            self._model_menu.addAction(action)
+
+        self.model_button.setEnabled(True)
+        self.model_button.setText(current_model.name if current_model is not None else self.tr("模型"))
+
+    async def _switch_model(self, model_name: str) -> None:
+        if self.context is None:
+            return
+
+        config_manager = get_config_manager()
+        if not config_manager.set_default_model(model_name):
+            logger.error("未找到模型: {}", model_name)
+            return
+
+        success = await self.context.switch_model(model_name)
+        self._refresh_model_selector()
+
+        if success:
+            logger.info("已切换到模型: {}", model_name)
+        else:
+            logger.error("切换模型失败: {}", model_name)
 
     # -------------------------------------------------------------------------
     # Event handlers

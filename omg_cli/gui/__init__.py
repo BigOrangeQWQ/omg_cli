@@ -52,6 +52,7 @@ class Window(MSFluentWindow):
 
         from omg_cli.gui.channel import ChannelInterface
         from omg_cli.gui.chat import ChatInterface
+        from omg_cli.gui.import_model import ImportModelInterface
         from omg_cli.gui.session import SessionInterface
 
         self._channel_mode = channel
@@ -69,14 +70,20 @@ class Window(MSFluentWindow):
             chat_mode="channel" if channel else "chat",
             parent=self,
         )
+        self.importModelInterface = ImportModelInterface(context=context, parent=self)
         self.initNavigation()
         self.initWindow()
+
+        # Wire up model import signal to refresh chat page
+        if self.chatInterface is not None:
+            self.importModelInterface.modelImported.connect(self.chatInterface._refresh_model_selector)
 
     def initNavigation(self) -> None:
         if self._channel_mode and self.channelInterface is not None:
             self.addSubInterface(self.channelInterface, FIF.CHAT, "Channel", FIF.CHAT)
         elif self.chatInterface is not None:
             self.addSubInterface(self.chatInterface, FIF.CHAT, "对话", FIF.CHAT)
+        self.addSubInterface(self.importModelInterface, FIF.SEND_FILL, "添加模型", FIF.SEND_FILL)
         self.addSubInterface(self.sessionInterface, FIF.HISTORY, "会话历史", FIF.HISTORY)
 
     def initWindow(self) -> None:
@@ -98,7 +105,7 @@ def run_gui(*, context: Any | None = None, channel: bool = False, debug: bool = 
 
     owns_app = QApplication.instance() is app
 
-    setTheme(Theme.DARK)
+    setTheme(Theme.LIGHT)
     _try_apply_sources_font(app)
 
     window = Window(context=context, channel=channel, debug=debug)

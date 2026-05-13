@@ -1,8 +1,5 @@
-"""Session history management subpage for GUI."""
-
-from __future__ import annotations
-
 from datetime import datetime
+from typing import Literal
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
@@ -21,7 +18,7 @@ from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
-from omg_cli.config.session_storage import SessionMetadata, SessionStorage
+from omg_cli.config.session_storage import ChannelSessionStorage, ChatSessionStorage, SessionMetadata
 from omg_cli.context.chat import ChatContext
 
 
@@ -38,7 +35,11 @@ class SessionCard(CardWidget):
         self.setMaximumWidth(1440)
         self.setBorderRadius(8)
         self.setStyleSheet(
-            "CardWidget#sessionCard {  border: 1px solid rgba(255, 255, 255, 0.08);  border-radius: 8px;}"
+            "CardWidget#sessionCard {"
+            "  background-color: rgba(255, 255, 255, 0.96);"
+            "  border: 1px solid rgba(0, 0, 0, 0.12);"
+            "  border-radius: 8px;"
+            "}"
         )
 
         self._layout = QHBoxLayout(self)
@@ -54,7 +55,7 @@ class SessionCard(CardWidget):
 
         self.detail_label = CaptionLabel(self._build_detail_text(), self)
         self.detail_label.setWordWrap(True)
-        self.detail_label.setTextColor(QColor("#808080"), QColor("#c0c0c0"))
+        self.detail_label.setTextColor(QColor("#000000"), QColor("#c0c0c0"))
 
         self._text_layout.addWidget(self.title_label, 0, Qt.AlignmentFlag.AlignVCenter)
         self._text_layout.addWidget(self.detail_label, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -76,15 +77,6 @@ class SessionCard(CardWidget):
 
         self.open_button.clicked.connect(self._on_open_clicked)
         self.delete_button.clicked.connect(self._on_delete_clicked)
-
-    def _normalBackgroundColor(self):
-        return QColor(32, 35, 40, 225)
-
-    def _hoverBackgroundColor(self):
-        return QColor(41, 45, 50, 238)
-
-    def _pressedBackgroundColor(self):
-        return QColor(27, 30, 35, 245)
 
     def _build_detail_text(self) -> str:
         updated_at = self._format_time(self.metadata.updated_at)
@@ -122,10 +114,10 @@ class SessionInterface(QWidget):
     ) -> None:
         super().__init__(parent=parent)
         self.setObjectName("sessionInterface")
-        self.setStyleSheet("SessionInterface { background-color: #151515; }")
+        self.setStyleSheet("SessionInterface { background-color: #ffffff; }")
 
         self.context = context
-        self.storage = SessionStorage()
+        self.storage = ChatSessionStorage() if chat_mode == "chat" else ChannelSessionStorage()
         self.chat_mode = chat_mode
 
         self._init_ui()
@@ -140,9 +132,11 @@ class SessionInterface(QWidget):
         self.toolbar_card.setObjectName("sessionToolbarCard")
         self.toolbar_card.setBorderRadius(8)
         self.toolbar_card.setStyleSheet(
+            # background-color: rgba(255, 255, 255, 0.92);  /* 半透明白，与原透明度一致 */
+            # border: 1px solid rgba(0, 0, 0, 0.08);        /* 极淡的黑色边框，相当于浅灰 */
             "CardWidget#sessionToolbarCard {"
-            "  background-color: rgba(36, 40, 46, 0.92);"
-            "  border: 1px solid rgba(255, 255, 255, 0.08);"
+            "  background-color: rgba(255, 255, 255, 0.92);"
+            "  border: 1px solid rgba(0, 0, 0, 0.08);"
             "  border-radius: 8px;"
             "}"
         )
@@ -156,7 +150,7 @@ class SessionInterface(QWidget):
 
         self.title_label = StrongBodyLabel(self.tr("会话历史"), self)
         self.summary_label = CaptionLabel(self.tr("加载中..."), self)
-        self.summary_label.setTextColor(QColor("#808080"), QColor("#c0c0c0"))
+        self.summary_label.setTextColor(QColor("#000000"), QColor("#c0c0c0"))
 
         title_layout.addWidget(self.title_label)
         title_layout.addWidget(self.summary_label)
@@ -208,13 +202,10 @@ class SessionInterface(QWidget):
             sessions = self.storage.list_sessions()
         return [s for s in sessions if self._session_mode(s) == self.chat_mode]
 
-    def _session_mode(self, metadata: SessionMetadata) -> str:
+    def _session_mode(self, metadata: SessionMetadata) -> Literal["channel", "chat"]:
         # Backward compatibility: some old channel sessions may still carry default chat_mode,
         # so infer channel mode when channel_state.json exists.
         if metadata.chat_mode == "channel":
-            return "channel"
-
-        if self.storage.load_channel_session(metadata.session_id) is not None:
             return "channel"
 
         return "chat"
@@ -228,8 +219,8 @@ class SessionInterface(QWidget):
             empty.setBorderRadius(8)
             empty.setStyleSheet(
                 "CardWidget#sessionEmptyCard {"
-                "  background-color: rgba(36, 40, 46, 0.92);"
-                "  border: 1px solid rgba(255, 255, 255, 0.08);"
+                "  background-color: rgba(255, 255, 255, 0.96);"
+                "  border: 1px solid rgba(0, 0, 0, 0.12);"
                 "  border-radius: 8px;"
                 "}"
             )
@@ -252,6 +243,7 @@ class SessionInterface(QWidget):
 
         for metadata in sessions:
             card = SessionCard(metadata, self)
+            card.setObjectName("sessionCard")
             card.loadRequested.connect(self._load_session)
             card.deleteRequested.connect(self._delete_session)
             idx = self.list_layout.count() - 1

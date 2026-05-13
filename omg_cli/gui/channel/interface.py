@@ -161,7 +161,7 @@ class ChannelInterface(QWidget):
         self._pending_tasks: set[asyncio.Task[Any]] = set()
 
         self.setObjectName("channelInterface")
-        self.setStyleSheet("ChannelInterface { background-color: #151515; }")
+        self.setStyleSheet("ChannelInterface { background-color: #f5f6f8; }")
 
         self._init_ui()
         self._bind_bridge_events()
@@ -187,12 +187,12 @@ class ChannelInterface(QWidget):
 
         self.runtime_label = BodyLabel("", self)
         self.runtime_label.setWordWrap(True)
-        self.runtime_label.setStyleSheet("color: #b8bcc2; padding: 2px 6px;")
+        self.runtime_label.setStyleSheet("color: #6c757d; padding: 2px 6px;")
         self.runtime_label.hide()
         self.main_layout.addWidget(self.runtime_label)
 
         self.empty_hint = BodyLabel(self.tr("暂无线程，等待后续 Event 创建。"), self)
-        self.empty_hint.setStyleSheet("color: #c0c0c0; padding: 12px 6px;")
+        self.empty_hint.setStyleSheet("color: #6c757d; padding: 12px 6px;")
         self.empty_hint.hide()
         self.main_layout.addWidget(self.empty_hint)
 
@@ -298,7 +298,7 @@ class ChannelInterface(QWidget):
             self.runtime_label.hide()
             return
 
-        color = "#b8bcc2"
+        color = "#6c757d"
         if level == "error":
             color = "#ff6b6b"
         elif level == "success":
