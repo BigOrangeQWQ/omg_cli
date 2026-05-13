@@ -7,10 +7,9 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEventLoop, Qt
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QWidget
-from qasync import QEventLoop
 from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets import MSFluentWindow, SubtitleLabel, Theme, setFont, setTheme
 
@@ -119,9 +118,10 @@ def _show_workspace_picker(app: QApplication) -> Path | None:
     picker.workspaceSelected.connect(on_selected)
     picker.show()
 
-    # Run a local event loop until user selects or cancels
-    loop = QEventLoop(app)
-    picker.workspaceSelected.connect(loop.stop)
+    # Run a local event loop until user selects or closes the window
+    loop = QEventLoop()
+    picker.workspaceSelected.connect(loop.quit)
+    picker.destroyed.connect(loop.quit)
     loop.exec()
 
     return selected_path
@@ -175,7 +175,9 @@ def run_gui(
     if not owns_app:
         return
 
-    loop = QEventLoop(app)
+    from qasync import QEventLoop as AsyncQEventLoop
+
+    loop = AsyncQEventLoop(app)
     asyncio.set_event_loop(loop)
     app.aboutToQuit.connect(loop.stop)
     with loop:
