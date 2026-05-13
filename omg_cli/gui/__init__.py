@@ -119,9 +119,9 @@ def _show_workspace_picker(app: QApplication) -> Path | None:
     picker.workspaceSelected.connect(on_selected)
     picker.show()
 
-    # Run a local event loop until picker closes
+    # Run a local event loop until user selects or cancels
     loop = QEventLoop(app)
-    picker.destroyed.connect(loop.quit)
+    picker.workspaceSelected.connect(loop.stop)
     loop.exec()
 
     return selected_path
