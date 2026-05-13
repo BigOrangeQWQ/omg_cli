@@ -127,6 +127,7 @@ class WorkspacePicker(QWidget):
         super().__init__(parent=parent)
         self.setObjectName("workspacePicker")
         self.setStyleSheet("WorkspacePicker { background-color: #f0f2f5; }")
+        self.setAttribute(Qt.WA_DeleteOnClose)
 
         self._init_ui()
         self._load_recent_directories()
