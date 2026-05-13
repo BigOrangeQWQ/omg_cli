@@ -330,12 +330,18 @@ class ChannelInterface(QWidget):
             self._switch_to_route(route)
             self._set_runtime_hint(f"已创建线程 #{thread_id}", "info")
 
+    # 不显示到 GUI 消息流的内部 activity 类型
+    _HIDDEN_ACTIVITIES = {"thinking", "tool_call", "status", "system"}
+
     def _on_role_activity(self, thread_id: int, role_name: str, activity_type: str, content: str) -> None:
         page = self._thread_pages.get(thread_id)
         if page is None:
             return
 
         activity_text = activity_type.strip().lower()
+        if activity_text in self._HIDDEN_ACTIVITIES:
+            return
+
         body = f"[{activity_text}] {content}".strip()
         if content.strip():
             page.append_message(Message(role="assistant", name=role_name, content=[TextSegment(text=body)]))
