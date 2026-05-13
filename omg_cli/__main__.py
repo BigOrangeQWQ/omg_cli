@@ -55,6 +55,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Launch the experimental PySide6 GUI",
     )
+    parser.add_argument(
+        "--workspace",
+        type=str,
+        help="Specify working directory for the session (GUI mode)",
+    )
     return parser
 
 
@@ -138,7 +143,8 @@ def main(argv: list[str] | None = None):
             )
 
     if args.gui:
-        run_gui(context=context, channel=args.channel, debug=args.debug)
+        workspace_path = Path(args.workspace) if args.workspace else None
+        run_gui(context=context, channel=args.channel, debug=args.debug, workspace=workspace_path)
         return
 
     # Run TUI (this will block until app exits)
