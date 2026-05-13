@@ -131,10 +131,28 @@ class ChannelContext:
         self._setup_spawn_thread_tool()
         self._register_default_context_tools()
 
+    def _init_context_metadata(self) -> None:
+        if self._init_context:
+            return
+
+        has_messages = any(thread.messages for thread in self.threads)
+        if not has_messages:
+            return
+
+        self._session_storage.save_metadata(self._session_metadata)
+        self._init_context = True
+
     def _persist_thread(self, thread_id: int) -> None:
         thread = self.thread_map.get(thread_id)
         if thread is None:
             return
+
+        if not self._init_context:
+            if not thread.messages:
+                return
+            self._init_context_metadata()
+            if not self._init_context:
+                return
 
         self._session_storage.save_thread_metadata(self.session_id, ChannelThreadMetadata.from_thread(thread))
         self._session_storage.save_messages(self.session_id, thread_id, thread.messages)
