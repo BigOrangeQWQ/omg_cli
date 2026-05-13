@@ -67,6 +67,13 @@ class SessionStorageBase:
     def _get_meta_path(self, session_id: str) -> Path:
         return self._get_session_dir(session_id) / "metadata.json"
 
+    def _has_persisted_content(self, session_id: str) -> bool:
+        """Return whether a session contains real chat records.
+
+        Subclasses should override this to define what counts as persisted content.
+        """
+        return True
+
     def save_metadata(self, metadata: SessionMetadata) -> None:
         self._ensure_dir_exists()
 
@@ -119,7 +126,7 @@ class SessionStorageBase:
         for session_dir in self.sessions_dir.iterdir():
             if session_dir.is_dir():
                 metadata = self.load_metadata(session_dir.name)
-                if metadata:
+                if metadata and self._has_persisted_content(session_dir.name):
                     sessions.append(metadata)
 
         sessions.sort(key=lambda s: s.updated_at, reverse=True)
@@ -141,6 +148,21 @@ class ChatSessionStorage(SessionStorageBase):
 
     def _get_channel_state_path(self, session_id: str) -> Path:
         return self._get_session_dir(session_id) / "channel_state.json"
+
+    def _has_persisted_content(self, session_id: str) -> bool:
+        messages_path = self._get_messages_path(session_id)
+        if not messages_path.exists():
+            return False
+
+        try:
+            with open(messages_path, encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        return True
+        except Exception:
+            return False
+
+        return False
 
     def append_message(self, session_id: str, message: Message | list[Message]) -> None:
         """Append a single message to the session's messages file."""
@@ -223,6 +245,27 @@ class ChannelSessionStorage(SessionStorageBase):
     @staticmethod
     def _thread_key(thread_id: int) -> str:
         return str(thread_id)
+
+    def _has_persisted_content(self, session_id: str) -> bool:
+        threads_dir = self._get_threads_dir(session_id)
+        if not threads_dir.exists():
+            return False
+
+        for thread_dir in threads_dir.iterdir():
+            if not thread_dir.is_dir():
+                continue
+            messages_path = thread_dir / "messages.jsonl"
+            if not messages_path.exists():
+                continue
+            try:
+                with open(messages_path, encoding="utf-8") as f:
+                    for line in f:
+                        if line.strip():
+                            return True
+            except Exception:
+                continue
+
+        return False
 
     def _load_json_dict(self, file_path: Path) -> dict[str, Any]:
         if not file_path.exists():

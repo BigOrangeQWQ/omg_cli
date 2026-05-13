@@ -43,11 +43,18 @@ class ChatContext(MetaContext):
             model_name=self.provider.model_name,
         )
         self._session_storage = ChatSessionStorage()
+        self._session_initialized = False
+
+    def _ensure_session_initialized(self) -> None:
+        if self._session_initialized:
+            return
         self._session_storage.save_metadata(self._session_metadata)
+        self._session_initialized = True
 
     async def append(self, message: Message, display: bool = True) -> None:
         try:
             self._session_storage.append_message(self.session_id, message)
+            self._ensure_session_initialized()
         except Exception:
             pass
         self.messages.append(message)
@@ -77,14 +84,25 @@ class ChatContext(MetaContext):
             await self._update_max_context_size()
 
     async def reset(self) -> None:
-        self._session_storage.save_messages(self.session_id, [])
-        self._session_storage.save_metadata(self._session_metadata)
+        if self._session_initialized:
+            self._session_storage.save_messages(self.session_id, [])
+            self._session_storage.save_metadata(self._session_metadata)
 
         await super().reset()
 
+        self._session_metadata = SessionMetadata(
+            session_id=self.session_id,
+            workspace=Path.cwd(),
+            model_name=self.provider.model_name,
+        )
+        self._session_initialized = False
+
     async def compact_context(self, keep_recent: int = RECENT_MESSAGES_TO_KEEP) -> str | None:
         await super().compact_context(keep_recent=keep_recent)
-        self._session_storage.save_messages(self.session_id, self.messages)
+        if self.messages:
+            self._ensure_session_initialized()
+        if self._session_initialized:
+            self._session_storage.save_messages(self.session_id, self.messages)
 
     def interrupt(self) -> None:
         self._interrupt_requested = True
