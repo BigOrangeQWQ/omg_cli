@@ -14,8 +14,10 @@ from qasync import QEventLoop
 from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets import MSFluentWindow, SubtitleLabel, Theme, setFont, setTheme
 
+from omg_cli.config import get_config_manager
 from omg_cli.gui.bridge import ContextEventBridge
 from omg_cli.gui.utils import emoji_to_pixmap
+from omg_cli.log import logger
 
 
 def _try_apply_sources_font(app: QApplication) -> bool:
@@ -96,7 +98,42 @@ class Window(MSFluentWindow):
         self.move(w // 2 - self.width() // 2, h // 2 - self.height() // 2)
 
 
-def run_gui(*, context: Any | None = None, channel: bool = False, debug: bool = False) -> None:
+def _show_workspace_picker(app: QApplication) -> Path | None:
+    """Show workspace picker and return selected path, or None if cancelled."""
+    from omg_cli.gui.workspace_picker import WorkspacePicker
+
+    picker = WorkspacePicker()
+    picker.resize(600, 500)
+
+    desktop = app.screens()[0].availableGeometry()
+    w, h = desktop.width(), desktop.height()
+    picker.move(w // 2 - picker.width() // 2, h // 2 - picker.height() // 2)
+
+    selected_path: Path | None = None
+
+    def on_selected(path: Path) -> None:
+        nonlocal selected_path
+        selected_path = path
+        picker.close()
+
+    picker.workspaceSelected.connect(on_selected)
+    picker.show()
+
+    # Run a local event loop until picker closes
+    loop = QEventLoop(app)
+    picker.destroyed.connect(loop.quit)
+    loop.exec()
+
+    return selected_path
+
+
+def run_gui(
+    *,
+    context: Any | None = None,
+    channel: bool = False,
+    debug: bool = False,
+    workspace: Path | None = None,
+) -> None:
     app = QApplication.instance()
     if app is None:
         app = QApplication(sys.argv)
@@ -107,6 +144,29 @@ def run_gui(*, context: Any | None = None, channel: bool = False, debug: bool = 
 
     setTheme(Theme.LIGHT)
     _try_apply_sources_font(app)
+
+    # Determine workspace
+    effective_workspace = workspace
+    if effective_workspace is None:
+        config_manager = get_config_manager()
+        persisted = config_manager.get_working_directory()
+        if persisted is not None:
+            effective_workspace = persisted
+
+    # Show workspace picker if no workspace determined
+    if effective_workspace is None:
+        selected = _show_workspace_picker(app)
+        if selected is None:
+            # User cancelled - exit
+            return
+        effective_workspace = selected
+
+    # Change to selected workspace
+    if effective_workspace is not None:
+        import os
+
+        os.chdir(effective_workspace)
+        logger.info(f"工作区已切换: {effective_workspace}")
 
     window = Window(context=context, channel=channel, debug=debug)
 
