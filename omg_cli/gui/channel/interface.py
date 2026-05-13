@@ -20,6 +20,7 @@ from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
+from omg_cli.config.role import get_role_manager
 from omg_cli.gui.bridge import ContextEventBridge
 from omg_cli.gui.chat import InputMethodTextEdit, MessageBubble, MessageItem
 from omg_cli.log import logger
@@ -196,9 +197,61 @@ class ChannelInterface(QWidget):
         self.empty_hint.hide()
         self.main_layout.addWidget(self.empty_hint)
 
+        # 无角色时的空状态引导
+        self.no_roles_card = QWidget(self)
+        no_roles_layout = QVBoxLayout(self.no_roles_card)
+        no_roles_layout.setAlignment(Qt.AlignCenter)
+        no_roles_layout.setSpacing(16)
+
+        no_roles_icon = BodyLabel("🎭", self.no_roles_card)
+        no_roles_icon.setStyleSheet("font-size: 48px;")
+        no_roles_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        no_roles_layout.addWidget(no_roles_icon)
+
+        no_roles_title = StrongBodyLabel(self.tr("未配置任何角色"), self.no_roles_card)
+        no_roles_title.setStyleSheet("font-size: 18px; font-weight: 600; color: #333;")
+        no_roles_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        no_roles_layout.addWidget(no_roles_title)
+
+        no_roles_desc = BodyLabel(
+            self.tr("Channel 模式需要至少一个角色才能使用多角色协作功能。"),
+            self.no_roles_card,
+        )
+        no_roles_desc.setStyleSheet("color: rgba(0, 0, 0, 0.50); font-size: 13px;")
+        no_roles_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        no_roles_desc.setWordWrap(True)
+        no_roles_layout.addWidget(no_roles_desc)
+
+        actions_layout = QHBoxLayout()
+        actions_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        actions_layout.setSpacing(12)
+
+        self.create_role_btn = PrimaryPushButton(self.tr("创建角色"), self.no_roles_card)
+        self.create_role_btn.setIcon(FIF.ADD)
+        self.create_role_btn.setFixedWidth(140)
+        self.create_role_btn.setFixedHeight(40)
+        actions_layout.addWidget(self.create_role_btn)
+
+        self.import_role_btn = PrimaryPushButton(self.tr("导入角色"), self.no_roles_card)
+        self.import_role_btn.setIcon(FIF.DOWNLOAD)
+        self.import_role_btn.setFixedWidth(140)
+        self.import_role_btn.setFixedHeight(40)
+        actions_layout.addWidget(self.import_role_btn)
+
+        no_roles_layout.addLayout(actions_layout)
+        self.no_roles_card.hide()
+        self.main_layout.addWidget(self.no_roles_card, stretch=1)
+
         self.stacked_widget = QStackedWidget(self)
         self.main_layout.addWidget(self.stacked_widget, stretch=1)
         self.tab_bar.currentChanged.connect(self._on_tab_changed)
+
+    def _has_roles(self) -> bool:
+        """Check if any roles are configured."""
+        try:
+            return len(get_role_manager().list_roles()) > 0
+        except Exception:
+            return False
 
     def refresh_threads(self) -> None:
         threads = self._collect_threads()
@@ -215,6 +268,18 @@ class ChannelInterface(QWidget):
             widget.deleteLater()
 
         self._thread_pages.clear()
+
+        # 检测是否有角色
+        if not self._has_roles():
+            self.no_roles_card.show()
+            self.empty_hint.hide()
+            self.stacked_widget.hide()
+            self.tab_bar.hide()
+            return
+
+        self.no_roles_card.hide()
+        self.stacked_widget.show()
+        self.tab_bar.show()
 
         if not threads:
             self.empty_hint.show()
