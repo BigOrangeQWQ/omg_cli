@@ -58,12 +58,10 @@ class Window(MSFluentWindow):
         from omg_cli.gui.session import SessionInterface
 
         self._channel_mode = channel
-        self.chatInterface = ChatInterface(context=context, debug=debug, parent=self) if not channel else None
-        self.channelBridge = ContextEventBridge(context, parent=self) if channel else None
-        self.channelInterface = (
-            ChannelInterface(channel_context=context, bridge=self.channelBridge, debug=debug, parent=self)
-            if channel
-            else None
+        self.chatInterface = ChatInterface(context=context, debug=debug, parent=self)
+        self.channelBridge = ContextEventBridge(context, parent=self)
+        self.channelInterface = ChannelInterface(
+            channel_context=context, bridge=self.channelBridge, debug=debug, parent=self
         )
 
         session_context = context.default_context if channel and hasattr(context, "default_context") else context
@@ -77,14 +75,11 @@ class Window(MSFluentWindow):
         self.initWindow()
 
         # Wire up model import signal to refresh chat page
-        if self.chatInterface is not None:
-            self.importModelInterface.modelImported.connect(self.chatInterface._refresh_model_selector)
+        self.importModelInterface.modelImported.connect(self.chatInterface._refresh_model_selector)
 
     def initNavigation(self) -> None:
-        if self._channel_mode and self.channelInterface is not None:
-            self.addSubInterface(self.channelInterface, FIF.CHAT, "Channel", FIF.CHAT)
-        elif self.chatInterface is not None:
-            self.addSubInterface(self.chatInterface, FIF.CHAT, "对话", FIF.CHAT)
+        self.addSubInterface(self.chatInterface, FIF.CHAT, "对话", FIF.CHAT)
+        self.addSubInterface(self.channelInterface, FIF.SEND, "Channel", FIF.SEND)
         self.addSubInterface(self.importModelInterface, FIF.SEND_FILL, "添加模型", FIF.SEND_FILL)
         self.addSubInterface(self.sessionInterface, FIF.HISTORY, "会话历史", FIF.HISTORY)
 
